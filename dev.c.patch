@@ -1,0 +1,36 @@
+--- /home/dhudson/mips-orig/dev.c	2013-06-13 17:45:45.833036067 +0100
++++ dev.c	2013-04-16 14:56:31.188471976 +0100
+@@ -3200,12 +3199,15 @@
+ 	ASSERT_RTNL();
+ 	RCU_INIT_POINTER(dev->rx_handler, NULL);
+ 	RCU_INIT_POINTER(dev->rx_handler_data, NULL);
+ }
+ EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
+ 
++int (*athrs_fast_nat_recv)(struct sk_buff *skb);
++EXPORT_SYMBOL_GPL(athrs_fast_nat_recv);
++
+ static int __netif_receive_skb(struct sk_buff *skb)
+ {
+ 	struct packet_type *ptype, *pt_prev;
+ 	rx_handler_func_t *rx_handler;
+ 	struct net_device *orig_dev;
+ 	struct net_device *null_or_dev;
+@@ -3226,12 +3228,17 @@
+ 	orig_dev = skb->dev;
+ 
+ 	skb_reset_network_header(skb);
+ 	skb_reset_transport_header(skb);
+ 	skb_reset_mac_len(skb);
+ 
++	if (athrs_fast_nat_recv) {
++		if (athrs_fast_nat_recv(skb))
++			return NET_RX_SUCCESS;
++	}
++
+ 	pt_prev = NULL;
+ 
+ 	rcu_read_lock();
+ 
+ another_round:
+ 

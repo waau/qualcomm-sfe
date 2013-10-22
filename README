@@ -84,24 +84,25 @@ stats on the effectiveness of the hashing algorithm it uses.
 
 Q) How does the code interact with Linux?
 
-A) There are two minor patches required to make this software run with
-Linux.  These are currently against a 3.3.8 kernel.  The first adds a
-hook to allow packets to be extracted out, while the second exposes a
-state variable inside netfilter that's necessary to enable TCP sequence
-and ACK checking within the offload path.  Note that this specific
-patch is against the QCA QSDK patched version of 3.3.8 - there's a
-slightly braindead "performance" patch in that kernel, courtesy of the
-OpenWrt community that makes the Linux forwarding path slightly faster
-at the expense of losing functionality :-(
+A) There are four minor patches required to make this software run with
+Linux.  These are currently against a 3.3.8 or 3.4.0 kernel:
+
+* (net/core/dev.c) adds a hook to allow packets to be extracted out.
+
+* (net/netfilter/nf_conntrack_proto_tcp.c) exposes a state variable inside
+  netfilter that's necessary to enable TCP sequence and ACK checking within
+  the offload path.  Note that this specific patch is against the QCA QSDK
+  patched version of 3.3.8 - there's a slightly braindead "performance"
+  patch in that kernel, courtesy of the OpenWrt community that makes the
+  Linux forwarding path slightly faster at the expense of losing
+  functionality :-(
+
+* (net/Kconfig) adds the shortcut-fe option.
+
+* (net/Makefile) adds the shortcut-fe build support.
 
 Once these are applied and the module is loaded then everything else
 is automatic :-)  The patches are in this git repo.
-
-
-Q) Isn't that patch to dev.c a gross hack?
-
-A) Yes it is and no, it's not thread safe.  Fixing this is on my "to do"
-list.
 
 
 Q) Are any of the pieces reused from other projects?

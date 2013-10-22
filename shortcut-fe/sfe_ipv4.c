@@ -11,7 +11,6 @@
 #include <linux/skbuff.h>
 #include <linux/icmp.h>
 #include <linux/sysctl.h>
-#include <linux/kthread.h>
 #include <linux/fs.h>
 #include <linux/pkt_sched.h>
 #include <linux/string.h>
@@ -97,7 +96,7 @@ struct sfe_ipv4_ethhdr {
 
 /*
  * The default Linux iphdr structure is "packed".  This really hurts performance
- * on many CPUs.  Here's an aligned an "unpacked" version of the same thing.
+ * on many CPUs.  Here's an aligned and "unpacked" version of the same thing.
  */
 struct sfe_ipv4_iphdr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
@@ -123,7 +122,7 @@ struct sfe_ipv4_iphdr {
 
 /*
  * The default Linux udphdr structure is "packed".  This really hurts performance
- * on many CPUs.  Here's an aligned an "unpacked" version of the same thing.
+ * on many CPUs.  Here's an aligned and "unpacked" version of the same thing.
  */
 struct sfe_ipv4_udphdr {
 	__be16 source;
@@ -134,7 +133,7 @@ struct sfe_ipv4_udphdr {
 
 /*
  * The default Linux tcphdr structure is "packed".  This really hurts performance
- * on many CPUs.  Here's an aligned an "unpacked" version of the same thing.
+ * on many CPUs.  Here's an aligned and "unpacked" version of the same thing.
  */
 struct sfe_ipv4_tcphdr {
 	__be16 source;
@@ -187,17 +186,17 @@ struct sfe_ipv4_create {
 	uint32_t flags;
 	uint32_t src_mtu;
 	uint32_t dest_mtu;
-	uint32_t src_ip;
-	int32_t src_port;
-	uint32_t src_ip_xlate;
-	int32_t src_port_xlate;
-	uint32_t dest_ip;
-	int32_t dest_port;
-	uint32_t dest_ip_xlate;
-	int32_t dest_port_xlate;
+	__be32 src_ip;
+	__be32 src_ip_xlate;
+	__be32 dest_ip;
+	__be32 dest_ip_xlate;
+	__be16 src_port;
+	__be16 src_port_xlate;
+	__be16 dest_port;
+	__be16 dest_port_xlate;
 	uint8_t src_mac[ETH_ALEN];
-	uint8_t dest_mac[ETH_ALEN];
 	uint8_t src_mac_xlate[ETH_ALEN];
+	uint8_t dest_mac[ETH_ALEN];
 	uint8_t dest_mac_xlate[ETH_ALEN];
 	uint8_t src_td_window_scale;
 	uint32_t src_td_max_window;
@@ -214,10 +213,10 @@ struct sfe_ipv4_create {
  */
 struct sfe_ipv4_destroy {
 	int protocol;
-	uint32_t src_ip;
-	int32_t src_port;
-	uint32_t dest_ip;
-	int32_t dest_port;
+	__be32 src_ip;
+	__be32 dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
 };
 
 /*
@@ -235,10 +234,10 @@ struct sfe_ipv4_destroy {
  */
 struct sfe_ipv4_sync {
 	int protocol;			/* IP protocol number (IPPROTO_...) */
-	uint32_t src_ip;		/* Non-NAT source address, i.e. the creator of the connection */
-	int32_t src_port;		/* Non-NAT source port */
-	uint32_t dest_ip;		/* Non-NAT destination address, i.e. to whom the connection was created */ 
-	int32_t dest_port;		/* Non-NAT destination port */
+	__be32 src_ip;			/* Non-NAT source address, i.e. the creator of the connection */
+	__be16 src_port;		/* Non-NAT source port */
+	__be32 dest_ip;			/* Non-NAT destination address, i.e. to whom the connection was created */ 
+	__be16 dest_port;		/* Non-NAT destination port */
 	uint32_t src_td_max_window;
 	uint32_t src_td_end;
 	uint32_t src_td_max_end;
@@ -306,10 +305,10 @@ struct sfe_ipv4_connection_match {
 	 */
 	struct net_device *match_dev;	/* Network device */
 	uint8_t match_protocol;		/* Protocol */
-	uint32_t match_src_ip;		/* Source IP address */
-	uint32_t match_dest_ip;		/* Destination IP address */
-	uint32_t match_src_port;	/* Source port/connection ident */
-	uint32_t match_dest_port;	/* Destination port/connection ident */
+	__be32 match_src_ip;		/* Source IP address */
+	__be32 match_dest_ip;		/* Destination IP address */
+	__be16 match_src_port;		/* Source port/connection ident */
+	__be16 match_dest_port;		/* Destination port/connection ident */
 
 	/*
 	 * Control the operations of the match.
@@ -328,12 +327,12 @@ struct sfe_ipv4_connection_match {
 	/*
 	 * Packet translation information.
 	 */
-	uint32_t xlate_src_ip;		/* Address after source translation */
-	uint32_t xlate_src_port;	/* Port/connection ident after source translation */
+	__be32 xlate_src_ip;		/* Address after source translation */
+	__be16 xlate_src_port;	/* Port/connection ident after source translation */
 	uint16_t xlate_src_csum_adjustment;
 					/* Transport layer checksum adjustment after source translation */
-	uint32_t xlate_dest_ip;		/* Address after destination translation */
-	uint32_t xlate_dest_port;	/* Port/connection ident after destination translation */
+	__be32 xlate_dest_ip;		/* Address after destination translation */
+	__be16 xlate_dest_port;	/* Port/connection ident after destination translation */
 	uint16_t xlate_dest_csum_adjustment;
 					/* Transport layer checksum adjustment after destination translation */
 
@@ -364,14 +363,14 @@ struct sfe_ipv4_connection {
 	struct sfe_ipv4_connection *prev;
 					/* Pointer to the previous entry in a hash chain */
 	int protocol;			/* IP protocol number */
-	uint32_t src_ip;		/* Source IP address */
-	uint32_t src_ip_xlate;		/* NAT-translated source IP address */
-	uint32_t dest_ip;		/* Destination IP address */
-	uint32_t dest_ip_xlate;		/* NAT-translated destination IP address */
-	uint32_t src_port;		/* Source port */
-	uint32_t src_port_xlate;	/* NAT-translated source port */
-	uint32_t dest_port;		/* Destination port */
-	uint32_t dest_port_xlate;	/* NAT-translated destination port */
+	__be32 src_ip;			/* Source IP address */
+	__be32 src_ip_xlate;		/* NAT-translated source IP address */
+	__be32 dest_ip;			/* Destination IP address */
+	__be32 dest_ip_xlate;		/* NAT-translated destination IP address */
+	__be16 src_port;		/* Source port */
+	__be16 src_port_xlate;		/* NAT-translated source port */
+	__be16 dest_port;		/* Destination port */
+	__be16 dest_port_xlate;		/* NAT-translated destination port */
 	struct sfe_ipv4_connection_match *original_match;
 					/* Original direction matching structure */
 	struct net_device *original_dev;
@@ -540,9 +539,7 @@ struct sfe_ipv4 {
 	 */
 	struct kobject *sys_sfe_ipv4;	/* sysfs linkage */
 	int pause;			/* Flag that, when non-zero, pauses all SFE processing */
-	int terminate;			/* Flag to notify the kernel thread to terminate */
 	int debug_dev;			/* Major number of the debug char device */
-	struct task_struct *thread;	/* Kernel thread */
 
 	/*
 	 * Callback notifiers.
@@ -627,11 +624,11 @@ static inline uint16_t sfe_ipv4_gen_ip_csum(struct sfe_ipv4_iphdr *iph)
  *	Generate the hash used in connection match lookups.
  */
 static inline unsigned int sfe_ipv4_get_connection_match_hash(struct net_device *dev, uint8_t protocol,
-							      uint32_t src_ip, uint32_t src_port,
-							      uint32_t dest_ip, uint32_t dest_port)
+							      __be32 src_ip, __be16 src_port,
+							      __be32 dest_ip, __be16 dest_port)
 {
 	size_t dev_addr = (size_t)dev;
-	uint32_t hash = ((uint32_t)dev_addr) ^ src_ip ^ dest_ip ^ protocol ^ src_port ^ dest_port;
+	uint32_t hash = ((uint32_t)dev_addr) ^ ntohl(src_ip ^ dest_ip) ^ protocol ^ ntohs(src_port ^ dest_port);
 	return ((hash >> SFE_IPV4_CONNECTION_HASH_SHIFT) ^ hash) & SFE_IPV4_CONNECTION_HASH_MASK;
 }
 
@@ -643,12 +640,12 @@ static inline unsigned int sfe_ipv4_get_connection_match_hash(struct net_device 
  */
 static struct sfe_ipv4_connection_match *
 sfe_ipv4_find_sfe_ipv4_connection_match(struct sfe_ipv4 *si, struct net_device *dev, uint8_t protocol,
-					uint32_t src_ip, uint32_t src_port,
-					uint32_t dest_ip, uint32_t dest_port) __attribute__((always_inline));
+					__be32 src_ip, __be16 src_port,
+					__be32 dest_ip, __be16 dest_port) __attribute__((always_inline));
 static struct sfe_ipv4_connection_match *
 sfe_ipv4_find_sfe_ipv4_connection_match(struct sfe_ipv4 *si, struct net_device *dev, uint8_t protocol,
-					uint32_t src_ip, uint32_t src_port,
-					uint32_t dest_ip, uint32_t dest_port)
+					__be32 src_ip, __be16 src_port,
+					__be32 dest_ip, __be16 dest_port)
 {
 	struct sfe_ipv4_connection_match *cm;
 	struct sfe_ipv4_connection_match *head;
@@ -748,7 +745,7 @@ static void sfe_ipv4_connection_match_compute_translations(struct sfe_ipv4_conne
 		uint32_t xlate_src_ip = ~cm->xlate_src_ip;
 		uint16_t xlate_src_ip_hi = xlate_src_ip >> 16;
 		uint16_t xlate_src_ip_lo = xlate_src_ip & 0xffff;
-		uint16_t xlate_src_port = ~(uint16_t)cm->xlate_src_port;
+		uint16_t xlate_src_port = ~cm->xlate_src_port;
 		uint32_t adj;
 
 		/*
@@ -776,7 +773,7 @@ static void sfe_ipv4_connection_match_compute_translations(struct sfe_ipv4_conne
 		uint32_t xlate_dest_ip = ~cm->xlate_dest_ip;
 		uint16_t xlate_dest_ip_hi = xlate_dest_ip >> 16;
 		uint16_t xlate_dest_ip_lo = xlate_dest_ip & 0xffff;
-		uint16_t xlate_dest_port = ~(uint16_t)cm->xlate_dest_port;
+		uint16_t xlate_dest_port = ~cm->xlate_dest_port;
 		uint32_t adj;
 
 		/*
@@ -898,10 +895,10 @@ static inline void sfe_ipv4_remove_sfe_ipv4_connection_match(struct sfe_ipv4 *si
  * sfe_ipv4_get_connection_hash()
  *	Generate the hash used in connection lookups.
  */
-static inline unsigned int sfe_ipv4_get_connection_hash(uint8_t protocol, uint32_t src_ip, uint32_t src_port,
-							uint32_t dest_ip, uint32_t dest_port)
+static inline unsigned int sfe_ipv4_get_connection_hash(uint8_t protocol, __be32 src_ip, __be16 src_port,
+							__be32 dest_ip, __be16 dest_port)
 {
-	uint32_t hash = src_ip ^ dest_ip ^ protocol ^ src_port ^ dest_port;
+	uint32_t hash = ntohl(src_ip ^ dest_ip) ^ protocol ^ ntohs(src_port ^ dest_port);
 	return ((hash >> SFE_IPV4_CONNECTION_HASH_SHIFT) ^ hash) & SFE_IPV4_CONNECTION_HASH_MASK;
 }
 
@@ -912,8 +909,8 @@ static inline unsigned int sfe_ipv4_get_connection_hash(uint8_t protocol, uint32
  * On entry we must be holding the lock that protects the hash table.
  */
 static inline struct sfe_ipv4_connection *sfe_ipv4_find_sfe_ipv4_connection(struct sfe_ipv4 *si, uint32_t protocol,
-									    uint32_t src_ip, uint32_t src_port,
-									    uint32_t dest_ip, uint32_t dest_port)
+									    __be32 src_ip, __be16 src_port,
+									    __be32 dest_ip, __be16 dest_port)
 {
 	struct sfe_ipv4_connection *c;
 	unsigned int conn_idx = sfe_ipv4_get_connection_hash(protocol, src_ip, src_port, dest_ip, dest_port);
@@ -1062,8 +1059,8 @@ static void sfe_ipv4_sync_rule(struct sfe_ipv4_sync *sis)
 
 	DEBUG_TRACE("update connection - p: %d, s: %pI4:%u, d: %pI4:%u\n",
 		    (int)tuple.dst.protonum,
-		    &tuple.src.u3.ip, (int)tuple.src.u.all,
-		    &tuple.dst.u3.ip, (int)tuple.dst.u.all);
+		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
+		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
 
 	/*
 	 * Look up conntrack connection
@@ -1293,10 +1290,10 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			     unsigned int len, struct sfe_ipv4_iphdr *iph, unsigned int ihl, bool flush_on_find)
 {
 	struct sfe_ipv4_udphdr *udph;
-	uint32_t src_ip;
-	uint32_t dest_ip;
-	uint32_t src_port;
-	uint32_t dest_port;
+	__be32 src_ip;
+	__be32 dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
 	struct sfe_ipv4_connection_match *cm;
 	uint8_t ttl;
 	struct net_device *xmit_dev;
@@ -1319,12 +1316,12 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 * because we've almost certainly got that in the cache.  We may not yet have
 	 * the UDP header cached though so allow more time for any prefetching.
 	 */
-	src_ip = ntohl(iph->saddr);
-	dest_ip = ntohl(iph->daddr);
+	src_ip = iph->saddr;
+	dest_ip = iph->daddr;
 
 	udph = (struct sfe_ipv4_udphdr *)(skb->data + ihl);
-	src_port = ntohs(udph->source);
-	dest_port = ntohs(udph->dest);
+	src_port = udph->source;
+	dest_port = udph->dest;
 
 	spin_lock(&si->lock);
 
@@ -1405,18 +1402,18 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC)) {
 		uint16_t udp_csum;
 
-		iph->saddr = htonl(cm->xlate_src_ip);
-		udph->source = htons(cm->xlate_src_port);
+		iph->saddr = cm->xlate_src_ip;
+		udph->source = cm->xlate_src_port;
 
 		/*
 		 * Do we have a non-zero UDP checksum?  If we do then we need
 		 * to update it.
 		 */
-		udp_csum = ntohs(udph->check);
+		udp_csum = udph->check;
 		if (likely(udp_csum)) {
 			uint32_t sum = udp_csum + cm->xlate_src_csum_adjustment;
 			sum = (sum & 0xffff) + (sum >> 16);
-			udph->check = htons((uint16_t)sum);
+			udph->check = (uint16_t)sum;
 		}
 	}
 
@@ -1426,18 +1423,18 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST)) {
 		uint16_t udp_csum;
 
-		iph->daddr = htonl(cm->xlate_dest_ip);
-		udph->dest = htons(cm->xlate_dest_port);
+		iph->daddr = cm->xlate_dest_ip;
+		udph->dest = cm->xlate_dest_port;
 
 		/*
 		 * Do we have a non-zero UDP checksum?  If we do then we need
 		 * to update it.
 		 */
-		udp_csum = ntohs(udph->check);
+		udp_csum = udph->check;
 		if (likely(udp_csum)) {
 			uint32_t sum = udp_csum + cm->xlate_dest_csum_adjustment;
 			sum = (sum & 0xffff) + (sum >> 16);
-			udph->check = htons((uint16_t)sum);
+			udph->check = (uint16_t)sum;
 		}
 	}
 
@@ -1607,10 +1604,10 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			     unsigned int len, struct sfe_ipv4_iphdr *iph, unsigned int ihl, bool flush_on_find)
 {
 	struct sfe_ipv4_tcphdr *tcph;
-	uint32_t src_ip;
-	uint32_t dest_ip;
-	uint32_t src_port;
-	uint32_t dest_port;
+	__be32 src_ip;
+	__be32 dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
 	struct sfe_ipv4_connection_match *cm;
 	struct sfe_ipv4_connection_match *counter_cm;
 	uint8_t ttl;
@@ -1635,12 +1632,12 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 * because we've almost certainly got that in the cache.  We may not yet have
 	 * the TCP header cached though so allow more time for any prefetching.
 	 */
-	src_ip = ntohl(iph->saddr);
-	dest_ip = ntohl(iph->daddr);
+	src_ip = iph->saddr;
+	dest_ip = iph->daddr;
 
 	tcph = (struct sfe_ipv4_tcphdr *)(skb->data + ihl);
-	src_port = ntohs(tcph->source);
-	dest_port = ntohs(tcph->dest);
+	src_port = tcph->source;
+	dest_port = tcph->dest;
 	flags = tcp_flag_word(tcph);
 
 	spin_lock(&si->lock);
@@ -1756,7 +1753,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Is our sequence fully past the right hand edge of the window?
 		 */
-		seq = htonl(tcph->seq);
+		seq = ntohl(tcph->seq);
 		if (unlikely((int32_t)(seq - (cm->protocol_state.tcp.max_end + 1)) > 0)) {
 			struct sfe_ipv4_connection *c = cm->connection;
 			sfe_ipv4_remove_sfe_ipv4_connection(si, c);
@@ -1789,7 +1786,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Update ACK according to any SACK option.
 		 */
-		ack = htonl(tcph->ack_seq);
+		ack = ntohl(tcph->ack_seq);
 		sack = ack;
 		if (unlikely(!sfe_ipv4_process_tcp_option_sack(tcph, data_offs, &sack))) {
 			struct sfe_ipv4_connection *c = cm->connection;
@@ -1878,7 +1875,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * Have we just seen the largest window size yet for this connection?  If yes
 		 * then we need to record the new value.
 		 */
-		scaled_win = htons(tcph->window) << cm->protocol_state.tcp.win_scale;
+		scaled_win = ntohs(tcph->window) << cm->protocol_state.tcp.win_scale;
 		scaled_win += (sack - ack);
 		if (unlikely(cm->protocol_state.tcp.max_win < scaled_win)) {
 			cm->protocol_state.tcp.max_win = scaled_win;
@@ -1913,17 +1910,17 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		uint16_t tcp_csum;
 		uint32_t sum;
 
-		iph->saddr = htonl(cm->xlate_src_ip);
-		tcph->source = htons(cm->xlate_src_port);
+		iph->saddr = cm->xlate_src_ip;
+		tcph->source = cm->xlate_src_port;
 
 		/*
 		 * Do we have a non-zero UDP checksum?  If we do then we need
 		 * to update it.
 		 */
-		tcp_csum = ntohs(tcph->check);
+		tcp_csum = tcph->check;
 		sum = tcp_csum + cm->xlate_src_csum_adjustment;
 		sum = (sum & 0xffff) + (sum >> 16);
-		tcph->check = htons((uint16_t)sum);
+		tcph->check = (uint16_t)sum;
 	}
 
 	/*
@@ -1933,17 +1930,17 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		uint16_t tcp_csum;
 		uint32_t sum;
 
-		iph->daddr = htonl(cm->xlate_dest_ip);
-		tcph->dest = htons(cm->xlate_dest_port);
+		iph->daddr = cm->xlate_dest_ip;
+		tcph->dest = cm->xlate_dest_port;
 
 		/*
 		 * Do we have a non-zero UDP checksum?  If we do then we need
 		 * to update it.
 		 */
-		tcp_csum = ntohs(tcph->check);
+		tcp_csum = tcph->check;
 		sum = tcp_csum + cm->xlate_dest_csum_adjustment;
 		sum = (sum & 0xffff) + (sum >> 16);
-		tcph->check = htons((uint16_t)sum);
+		tcph->check = (uint16_t)sum;
 	}
 
 	/*
@@ -2042,10 +2039,10 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	uint32_t *icmp_trans_h;
 	struct sfe_ipv4_udphdr *icmp_udph;
 	struct sfe_ipv4_tcphdr *icmp_tcph;
-	uint32_t src_ip;
-	uint32_t dest_ip;
-	uint32_t src_port;
-	uint32_t dest_port;
+	__be32 src_ip;
+	__be32 dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
 	struct sfe_ipv4_connection_match *cm;
 	struct sfe_ipv4_connection *c;
 
@@ -2144,8 +2141,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 		}
 
 		icmp_udph = (struct sfe_ipv4_udphdr *)icmp_trans_h;
-		src_port = ntohs(icmp_udph->source);
-		dest_port = ntohs(icmp_udph->dest);
+		src_port = icmp_udph->source;
+		dest_port = icmp_udph->dest;
 		break;
 
 	case IPPROTO_TCP:
@@ -2164,8 +2161,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 		}
 
 		icmp_tcph = (struct sfe_ipv4_tcphdr *)icmp_trans_h;
-		src_port = ntohs(icmp_tcph->source);
-		dest_port = ntohs(icmp_tcph->dest);
+		src_port = icmp_tcph->source;
+		dest_port = icmp_tcph->dest;
 		break;
 
 	default:
@@ -2178,8 +2175,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 		return 0;
 	}
 
-	src_ip = ntohl(icmp_iph->saddr);
-	dest_ip = ntohl(icmp_iph->daddr);
+	src_ip = icmp_iph->saddr;
+	dest_ip = icmp_iph->daddr;
 
 	spin_lock(&si->lock);
 
@@ -2268,7 +2265,7 @@ static int sfe_ipv4_recv(struct sk_buff *skb)
 	/*
 	 * We're only interested in IP packets.
 	 */	
-	if (unlikely(ETH_P_IP != skb->protocol)) {
+	if (unlikely(htons(ETH_P_IP) != skb->protocol)) {
 		DEBUG_TRACE("not IP packet\n");
 		return 0;
 	}
@@ -2519,8 +2516,8 @@ static void sfe_ipv4_create_rule(struct sfe_ipv4 *si, struct sfe_ipv4_create *si
 
 		DEBUG_TRACE("connection already exists - p: %d\n"
 			    "  s: %s:%pM:%pI4:%u, d: %s:%pM:%pI4:%u\n",
-			    sic->protocol, sic->src_dev->name, sic->src_mac, &sic->src_ip, sic->src_port,
-			    sic->dest_dev->name, sic->dest_mac, &sic->dest_ip, sic->dest_port);
+			    sic->protocol, sic->src_dev->name, sic->src_mac, &sic->src_ip, ntohs(sic->src_port),
+			    sic->dest_dev->name, sic->dest_mac, &sic->dest_ip, ntohs(sic->dest_port));
 		return;
 	}
 
@@ -2681,9 +2678,9 @@ static void sfe_ipv4_create_rule(struct sfe_ipv4 *si, struct sfe_ipv4_create *si
 		   "  d: %s:%pM(%pM):%pI4(%pI4):%u(%u)\n",
 		   sic->protocol,
 		   sic->src_dev->name, sic->src_mac, sic->src_mac_xlate,
-		   &sic->src_ip, &sic->src_ip_xlate, sic->src_port, sic->src_port_xlate,
+		   &sic->src_ip, &sic->src_ip_xlate, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
 		   sic->dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,
-		   &sic->dest_ip, &sic->dest_ip_xlate, sic->dest_port, sic->dest_port_xlate);
+		   &sic->dest_ip, &sic->dest_ip_xlate, ntohs(sic->dest_port), ntohs(sic->dest_port_xlate));
 }
 
 /*
@@ -2793,24 +2790,24 @@ static unsigned int sfe_ipv4_post_routing_hook(unsigned int hooknum,
 	/*
 	 * Get addressing information, non-NAT first
 	 */
-	sic.src_ip = (uint32_t)orig_tuple.src.u3.ip;
-	sic.dest_ip = (uint32_t)orig_tuple.dst.u3.ip;
+	sic.src_ip = (__be32)orig_tuple.src.u3.ip;
+	sic.dest_ip = (__be32)orig_tuple.dst.u3.ip;
 
 	/*
 	 * NAT'ed addresses - note these are as seen from the 'reply' direction
 	 * When NAT does not apply to this connection these will be identical to the above.
 	 */
-	sic.src_ip_xlate = (uint32_t)reply_tuple.dst.u3.ip;
-	sic.dest_ip_xlate = (uint32_t)reply_tuple.src.u3.ip;
+	sic.src_ip_xlate = (__be32)reply_tuple.dst.u3.ip;
+	sic.dest_ip_xlate = (__be32)reply_tuple.src.u3.ip;
 
 	sic.flags = 0;
 
 	switch (sic.protocol) {
 	case IPPROTO_TCP:
-		sic.src_port = (int32_t)orig_tuple.src.u.tcp.port;
-		sic.dest_port = (int32_t)orig_tuple.dst.u.tcp.port;
-		sic.src_port_xlate = (int32_t)reply_tuple.dst.u.tcp.port;
-		sic.dest_port_xlate = (int32_t)reply_tuple.src.u.tcp.port;
+		sic.src_port = orig_tuple.src.u.tcp.port;
+		sic.dest_port = orig_tuple.dst.u.tcp.port;
+		sic.src_port_xlate = reply_tuple.dst.u.tcp.port;
+		sic.dest_port_xlate = reply_tuple.src.u.tcp.port;
 		sic.src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
 		sic.src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
 		sic.src_td_end = ct->proto.tcp.seen[0].td_end;
@@ -2842,17 +2839,18 @@ static unsigned int sfe_ipv4_post_routing_hook(unsigned int hooknum,
 		if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
 			spin_unlock_bh(&ct->lock);
 			DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
-				    ct->proto.tcp.state, &sic.src_ip, sic.src_port, &sic.dest_ip, sic.dest_port);
+				    ct->proto.tcp.state, &sic.src_ip, ntohs(sic.src_port),
+				    &sic.dest_ip, ntohs(sic.dest_port));
 			goto done1;
 		}
 		spin_unlock_bh(&ct->lock);
 		break;
 
 	case IPPROTO_UDP:
-		sic.src_port = (int32_t)orig_tuple.src.u.udp.port;
-		sic.dest_port = (int32_t)orig_tuple.dst.u.udp.port;
-		sic.src_port_xlate = (int32_t)reply_tuple.dst.u.udp.port;
-		sic.dest_port_xlate = (int32_t)reply_tuple.src.u.udp.port;
+		sic.src_port = orig_tuple.src.u.udp.port;
+		sic.dest_port = orig_tuple.dst.u.udp.port;
+		sic.src_port_xlate = reply_tuple.dst.u.udp.port;
+		sic.dest_port_xlate = reply_tuple.src.u.udp.port;
 		break;
 
 	default:
@@ -3003,7 +3001,8 @@ static void sfe_ipv4_destroy_rule(struct sfe_ipv4 *si, struct sfe_ipv4_destroy *
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("connection does not exist - p: %d, s: %pI4:%u, d: %pI4:%u\n",
-			    sid->protocol, &sid->src_ip, sid->src_port, &sid->dest_ip, sid->dest_port);
+			    sid->protocol, &sid->src_ip, ntohs(sid->src_port),
+			    &sid->dest_ip, ntohs(sid->dest_port));
 		return;
 	}
 
@@ -3022,7 +3021,8 @@ static void sfe_ipv4_destroy_rule(struct sfe_ipv4 *si, struct sfe_ipv4_destroy *
 	local_bh_enable();
 
 	DEBUG_INFO("connection destroyed - p: %d, s: %pI4:%u, d: %pI4:%u\n",
-		   sid->protocol, &sid->src_ip, sid->src_port, &sid->dest_ip, sid->dest_port);
+		   sid->protocol, &sid->src_ip, ntohs(sid->src_port),
+		   &sid->dest_ip, ntohs(sid->dest_port));
 }
 
 /*
@@ -3075,18 +3075,18 @@ static int sfe_ipv4_conntrack_event(unsigned int events, struct nf_ct_event *ite
 	 * Extract information from the conntrack connection.  We're only interested
 	 * in nominal connection information (i.e. we're ignoring any NAT information).
 	 */
-	sid.src_ip = (uint32_t)orig_tuple.src.u3.ip;
-	sid.dest_ip = (uint32_t)orig_tuple.dst.u3.ip;
+	sid.src_ip = (__be32)orig_tuple.src.u3.ip;
+	sid.dest_ip = (__be32)orig_tuple.dst.u3.ip;
 
 	switch (sid.protocol) {
 	case IPPROTO_TCP:
-		sid.src_port = (int32_t)orig_tuple.src.u.tcp.port;
-		sid.dest_port = (int32_t)orig_tuple.dst.u.tcp.port;
+		sid.src_port = orig_tuple.src.u.tcp.port;
+		sid.dest_port = orig_tuple.dst.u.tcp.port;
 		break;
 
 	case IPPROTO_UDP:
-		sid.src_port = (int32_t)orig_tuple.src.u.udp.port;
-		sid.dest_port = (int32_t)orig_tuple.dst.u.udp.port;
+		sid.src_port = orig_tuple.src.u.udp.port;
+		sid.dest_port = orig_tuple.dst.u.udp.port;
 		break;
 
 	default:
@@ -3123,46 +3123,6 @@ static struct nf_hook_ops sfe_ipv4_ops_post_routing[] __read_mostly = {
 		.priority = NF_IP_PRI_NAT_SRC + 1,
 	},
 };
-
-/*
- * sfe_ipv4_get_terminate()
- */
-static ssize_t sfe_ipv4_get_terminate(struct device *dev,
-				      struct device_attribute *attr,
-				      char *buf)
-{
-	struct sfe_ipv4 *si = &__si;
-	ssize_t count;
-	int num;
-
-	spin_lock_bh(&si->lock);
-	num = si->terminate;
-	spin_unlock_bh(&si->lock);
-
-	count = snprintf(buf, (ssize_t)PAGE_SIZE, "%d\n", num);
-	return count;
-}
-
-/*
- * sfe_ipv4_set_terminate()
- *
- * Writing anything to this 'file' will cause this module to terminate processing.
- */
-static ssize_t sfe_ipv4_set_terminate(struct device *dev,
-				      struct device_attribute *attr,
-				      const char *buf, size_t count)
-{
-	struct sfe_ipv4 *si = &__si;
-
-	spin_lock_bh(&si->lock);
-	si->terminate = 1;
-	wake_up_process(si->thread);
-	spin_unlock_bh(&si->lock);
-
-	DEBUG_INFO("terminate written\n");
-
-	return count;
-}
 
 /*
  * sfe_ipv4_get_pause()
@@ -3237,8 +3197,6 @@ static ssize_t sfe_ipv4_get_debug_dev(struct device *dev,
 /*
  * sysfs attributes for the default classifier itself.
  */
-static const struct device_attribute sfe_ipv4_terminate_attr =
-	__ATTR(terminate, S_IWUGO | S_IRUGO, sfe_ipv4_get_terminate, sfe_ipv4_set_terminate);
 static const struct device_attribute sfe_ipv4_pause_attr =
 	__ATTR(pause, S_IWUGO | S_IRUGO, sfe_ipv4_get_pause, sfe_ipv4_set_pause);
 static const struct device_attribute sfe_ipv4_debug_dev_attr =
@@ -3372,7 +3330,6 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 		struct sfe_ipv4_connection *c;
 		struct sfe_ipv4_sync sis;
 
-// XXX - probably need to check for a terminate flag.
 		cm = si->active_head;
 		if (!cm) {
 			break;
@@ -3492,17 +3449,17 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	int bytes_read;
 	int protocol;
 	struct net_device *src_dev;
-	uint32_t src_ip;
-	uint32_t src_ip_xlate;
-	uint32_t src_port;
-	uint32_t src_port_xlate;
+	__be32 src_ip;
+	__be32 src_ip_xlate;
+	__be16 src_port;
+	__be16 src_port_xlate;
 	uint64_t src_rx_packets;
 	uint64_t src_rx_bytes;
 	struct net_device *dest_dev;
-	uint32_t dest_ip;
-	uint32_t dest_ip_xlate;
-	uint32_t dest_port;
-	uint32_t dest_port_xlate;
+	__be32 dest_ip;
+	__be32 dest_ip_xlate;
+	__be16 dest_port;
+	__be16 dest_port_xlate;
 	uint64_t dest_rx_packets;
 	uint64_t dest_rx_bytes;
 	uint64_t last_sync_jiffies;
@@ -3606,11 +3563,11 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				protocol,
 				src_dev->name,
 				&src_ip, &src_ip_xlate,
-				src_port, src_port_xlate,
+				ntohs(src_port), ntohs(src_port_xlate),
 				src_rx_packets, src_rx_bytes,
 				dest_dev->name,
 				&dest_ip, &dest_ip_xlate,
-				dest_port, dest_port_xlate,
+				ntohs(dest_port), ntohs(dest_port_xlate),
 				dest_rx_packets, dest_rx_bytes,
 				last_sync_jiffies);
 
@@ -3937,22 +3894,14 @@ static struct file_operations sfe_ipv4_debug_dev_fops = {
 };
 
 /*
- * sfe_ipv4_thread_fn()
- *	A thread to handle tasks that can only be done in thread context.
+ * sfe_ipv4_init()
  */
-static int sfe_ipv4_thread_fn(void *arg)
+static int __init sfe_ipv4_init(void)
 {
 	struct sfe_ipv4 *si = &__si;
 	int result = -1;
 
-	DEBUG_INFO("thread start\n");
-
-	/*
-	 * Get reference to this module - we release it when this thread exits.
-	 */
-	try_module_get(THIS_MODULE);
-
-	memset(si, 0, sizeof(struct sfe_ipv4));
+	DEBUG_INFO("SFE init\n");
 
 	/*
 	 * Create sys/sfe_ipv4
@@ -3966,12 +3915,6 @@ static int sfe_ipv4_thread_fn(void *arg)
 	/*
 	 * Create files, one for each parameter supported by this module.
 	 */
-	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_terminate_attr.attr);
-	if (result) {
-		DEBUG_ERROR("failed to register terminate file: %d\n", result);
-		goto exit2;
-	}
-
 	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_pause_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register pause file: %d\n", result);
@@ -4028,49 +3971,17 @@ static int sfe_ipv4_thread_fn(void *arg)
 	}
 #endif
 
-// XXX - this is where we need to register with any lower level offload services.
+	spin_lock_init(&si->lock);
 
-// XXX - there needs to be some locking here.
-	athrs_fast_nat_recv = sfe_ipv4_recv;
-
-	/*
-	 * Allow wakeup signals.
-	 */
-	allow_signal(SIGCONT);
-
-	/*
-	 * Loop indefinitely until a termination event is signalled.
-	 */
-	spin_lock_bh(&si->lock);
-	while (!si->terminate) {
-		/*
-		 * Sleep and wait for an instruction 
-		 */
-		spin_unlock_bh(&si->lock);
-	
-		DEBUG_TRACE("sleep\n");
-		set_current_state(TASK_INTERRUPTIBLE);
-		schedule();
-
-		spin_lock_bh(&si->lock);
-	}
-
-	spin_unlock_bh(&si->lock);
-
-	DEBUG_INFO("terminate\n");
-
-// XXX - there needs to be some locking here.
-	athrs_fast_nat_recv = NULL;
-
-// XXX - this is where we need to unregister with any lower level offload services.
+	BUG_ON(athrs_fast_nat_recv != NULL);
+	RCU_INIT_POINTER(athrs_fast_nat_recv, sfe_ipv4_recv);
+	return 0;
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_conntrack_unregister_notifier(&init_net, &sfe_ipv4_conntrack_notifier);
-
 exit7:
 #endif
-	del_timer_sync(&si->timer);
 	nf_unregister_hooks(sfe_ipv4_ops_post_routing, ARRAY_SIZE(sfe_ipv4_ops_post_routing));
+	del_timer_sync(&si->timer);
 
 exit6:
 	unregister_inetaddr_notifier(&si->inet_notifier);
@@ -4084,36 +3995,10 @@ exit4:
 	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_pause_attr.attr);
 
 exit3:
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_terminate_attr.attr);
-
-exit2:
 	kobject_put(si->sys_sfe_ipv4);
 
 exit1:
-	module_put(THIS_MODULE);
 	return result;
-}
-
-/*
- * sfe_ipv4_init()
- */
-static int __init sfe_ipv4_init(void)
-{
-	struct sfe_ipv4 *si = &__si;
-
-	DEBUG_INFO("SFE init\n");
-
-	spin_lock_init(&si->lock);
-
-	/*
-	 * Create a thread to handle management of the module.
-	 */
-	si->thread = kthread_create(sfe_ipv4_thread_fn, NULL, "%s", "sfe_ipv4_thread");
-	if (!si->thread) {
-		return -EINVAL;
-	}
-	wake_up_process(si->thread);
-	return 0;
 }
 
 /*
@@ -4121,7 +4006,41 @@ static int __init sfe_ipv4_init(void)
  */
 static void __exit sfe_ipv4_exit(void)
 {
+	struct sfe_ipv4 *si = &__si;
+
 	DEBUG_INFO("SFE exit\n");
+
+	RCU_INIT_POINTER(athrs_fast_nat_recv, NULL);
+
+	/*
+	 * Wait for all callbacks to complete.
+	 */
+	rcu_barrier();
+
+	/*
+	 * Destroy all connections.
+	 */
+	sfe_ipv4_destroy_all(si, NULL);
+
+// XXX - this is where we need to unregister with any lower level offload services.
+
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	nf_conntrack_unregister_notifier(&init_net, &sfe_ipv4_conntrack_notifier);
+
+#endif
+	nf_unregister_hooks(sfe_ipv4_ops_post_routing, ARRAY_SIZE(sfe_ipv4_ops_post_routing));
+	del_timer_sync(&si->timer);
+
+	unregister_inetaddr_notifier(&si->inet_notifier);
+	unregister_netdevice_notifier(&si->dev_notifier);
+	unregister_chrdev(si->debug_dev, "sfe_ipv4");
+
+	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
+
+	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_pause_attr.attr);
+
+	kobject_put(si->sys_sfe_ipv4);
+
 }
 
 module_init(sfe_ipv4_init)

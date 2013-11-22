@@ -4,84 +4,15 @@
  *
  * XXX - fill in the appropriate GPL notice.
  */
-#include <linux/types.h>
-#include <linux/ip.h>
-#include <linux/tcp.h>
 #include <linux/module.h>
+#include <linux/sysfs.h>
 #include <linux/skbuff.h>
 #include <linux/icmp.h>
-#include <linux/sysctl.h>
-#include <linux/fs.h>
-#include <linux/pkt_sched.h>
-#include <linux/string.h>
-#include <net/route.h>
-#include <net/ip.h>
 #include <net/tcp.h>
-#include <asm/unaligned.h>
-#include <asm/uaccess.h>
-#include <linux/inetdevice.h>
-#include <linux/netfilter_ipv4.h>
-#include <linux/netfilter_bridge.h>
-#include <linux/if_bridge.h>
-#include <net/netfilter/nf_conntrack.h>
-#include <net/netfilter/nf_conntrack_acct.h>
-#include <net/netfilter/nf_conntrack_helper.h>
-#include <net/netfilter/nf_conntrack_l4proto.h>
-#include <net/netfilter/nf_conntrack_l3proto.h>
-#include <net/netfilter/nf_conntrack_zones.h>
-#include <net/netfilter/nf_conntrack_core.h>
-#include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
-#include <net/netfilter/ipv4/nf_defrag_ipv4.h>
-#include <net/arp.h>
+#include <linux/etherdevice.h>
 
-/*
- * Select whether we "hook" in below or above the Ethernet bridge layer.
- *
- * XXX - note that hooking below the bridge (set this value to 0) will
- * not currently work completely cleanly within Linux.  In order to make
- * this work properly we need to resync stats to Linux.  Arguably if we
- * want to do this we also need to validate that the source MAC address
- * of any packets is actually correct too.  Right now we're relying on
- * the bridge layer to do this sort of thing for us.
- */
-#define SFE_HOOK_ABOVE_BRIDGE 1
-
-/*
- * Debug output verbosity level.
- */
-#define DEBUG_LEVEL 2
-
-#if (DEBUG_LEVEL < 1)
-#define DEBUG_ERROR(s, ...)
-#else
-#define DEBUG_ERROR(s, ...) \
-	printk("%s[%u]: ERROR:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__)
-#endif
-
-#if (DEBUG_LEVEL < 2)
-#define DEBUG_WARN(s, ...)
-#else
-#define DEBUG_WARN(s, ...) \
-	printk("%s[%u]: WARN:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__);
-#endif
-
-#if (DEBUG_LEVEL < 3)
-#define DEBUG_INFO(s, ...)
-#else
-#define DEBUG_INFO(s, ...) \
-	printk("%s[%u]: INFO:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__);
-#endif
-
-#if (DEBUG_LEVEL < 4)
-#define DEBUG_TRACE(s, ...)
-#else
-#define DEBUG_TRACE(s, ...) \
-	printk("%s[%u]: TRACE:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__);
-#endif
+#include "sfe.h"
+#include "sfe_ipv4.h"
 
 /*
  * The default Linux ethhdr structure is "packed".  It also has byte aligned
@@ -117,7 +48,10 @@ struct sfe_ipv4_iphdr {
 	__sum16 check;
 	__be32 saddr;
 	__be32 daddr;
-	/*The options start here. */
+
+	/*
+	 * The options start here.
+	 */
 };
 
 /*
@@ -168,88 +102,6 @@ struct sfe_ipv4_tcphdr {
 	__be16 window;
 	__sum16	check;
 	__be16 urg_ptr;
-};
-
-/*
- * IPv4 connection flags.
- */
-#define SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK 0x1
- 					/* Indicates that we should not check sequence numbers */
-
-/*
- * IPv4 connection creation structure.
- */
-struct sfe_ipv4_create {
-	int protocol;
-	struct net_device *src_dev;
-	struct net_device *dest_dev;
-	uint32_t flags;
-	uint32_t src_mtu;
-	uint32_t dest_mtu;
-	__be32 src_ip;
-	__be32 src_ip_xlate;
-	__be32 dest_ip;
-	__be32 dest_ip_xlate;
-	__be16 src_port;
-	__be16 src_port_xlate;
-	__be16 dest_port;
-	__be16 dest_port_xlate;
-	uint8_t src_mac[ETH_ALEN];
-	uint8_t src_mac_xlate[ETH_ALEN];
-	uint8_t dest_mac[ETH_ALEN];
-	uint8_t dest_mac_xlate[ETH_ALEN];
-	uint8_t src_td_window_scale;
-	uint32_t src_td_max_window;
-	uint32_t src_td_end;
-	uint32_t src_td_max_end;
-	uint8_t dest_td_window_scale;
-	uint32_t dest_td_max_window;
-	uint32_t dest_td_end;
-	uint32_t dest_td_max_end;
-};
-
-/*
- * IPv4 connection destruction structure.
- */
-struct sfe_ipv4_destroy {
-	int protocol;
-	__be32 src_ip;
-	__be32 dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-};
-
-/*
- * IPv4 sync reasons.
- */
-#define SFE_IPV4_SYNC_REASON_STATS 0	/* Sync is to synchronize stats */
-#define SFE_IPV4_SYNC_REASON_FLUSH 1	/* Sync is to flush a cache entry */
-#define SFE_IPV4_SYNC_REASON_EVICT 2	/* Sync is to evict a cache entry */
-
-/*
- * Structure used to sync IPv4 connection stats/state back within the system.
- *
- * NOTE: The addresses here are NON-NAT addresses, i.e. the true endpoint addressing.
- * 'src' is the creator of the connection.
- */
-struct sfe_ipv4_sync {
-	int protocol;			/* IP protocol number (IPPROTO_...) */
-	__be32 src_ip;			/* Non-NAT source address, i.e. the creator of the connection */
-	__be16 src_port;		/* Non-NAT source port */
-	__be32 dest_ip;			/* Non-NAT destination address, i.e. to whom the connection was created */ 
-	__be16 dest_port;		/* Non-NAT destination port */
-	uint32_t src_td_max_window;
-	uint32_t src_td_end;
-	uint32_t src_td_max_end;
-	uint64_t src_packet_count;
-	uint64_t src_byte_count;
-	uint32_t dest_td_max_window;
-	uint32_t dest_td_end;
-	uint32_t dest_td_max_end;
-	uint64_t dest_packet_count;
-	uint64_t dest_byte_count;
-	uint64_t delta_jiffies;		/* Time to be added to the current timeout to keep the connection alive */
-	uint8_t reason;			/* Reason of synchronization */
 };
 
 /*
@@ -474,7 +326,7 @@ static char *sfe_ipv4_exception_events_string[SFE_IPV4_EXCEPTION_EVENT_LAST] = {
 };
 
 /*
- * Per-modules structure.
+ * Per-module structure.
  */
 struct sfe_ipv4 {
 	spinlock_t lock;		/* Lock for SMP correctness */
@@ -488,6 +340,8 @@ struct sfe_ipv4 {
 					/* Tail of the list of all connections */
 	unsigned int num_connections;	/* Number of connections */
 	struct timer_list timer;	/* Timer used for periodic sync ops */
+	sfe_ipv4_sync_rule_callback_t __rcu sync_rule_callback;
+					/* Callback function registered by a connection manager for stats syncing */
 	struct sfe_ipv4_connection *conn_hash[SFE_IPV4_CONNECTION_HASH_SIZE];
 					/* Connection hash table */
 	struct sfe_ipv4_connection_match *conn_match_hash[SFE_IPV4_CONNECTION_HASH_SIZE];
@@ -538,16 +392,7 @@ struct sfe_ipv4 {
 	 * Control state.
 	 */
 	struct kobject *sys_sfe_ipv4;	/* sysfs linkage */
-	int pause;			/* Flag that, when non-zero, pauses all SFE processing */
 	int debug_dev;			/* Major number of the debug char device */
-
-	/*
-	 * Callback notifiers.
-	 */
-	struct notifier_block dev_notifier;
-					/* Device notifier */
-	struct notifier_block inet_notifier;
-					/* IP notifier */
 };
 
 /*
@@ -581,16 +426,6 @@ typedef bool (*sfe_ipv4_debug_xml_write_method_t)(struct sfe_ipv4 *si, char *buf
 						  int *total_read, struct sfe_ipv4_debug_xml_write_state *ws);
 
 struct sfe_ipv4 __si;
-
-/*
- * Expose what should be a static flag in the TCP connection tracker.
- */
-extern int nf_ct_tcp_no_window_check;
-
-/*
- * Expose the hook for the receive processing.
- */
-extern int (*athrs_fast_nat_recv)(struct sk_buff *skb);
 
 /*
  * sfe_ipv4_gen_ip_csum()
@@ -1034,95 +869,6 @@ static void sfe_ipv4_remove_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_
 }
 
 /*
- * sfe_ipv4_sync_rule()
- *	Synchronize a connection's state.
- */
-static void sfe_ipv4_sync_rule(struct sfe_ipv4_sync *sis)
-{
-	struct nf_conntrack_tuple_hash *h;
-	struct nf_conntrack_tuple tuple;
-	struct nf_conn *ct;
-	struct nf_conn_counter *acct;
-
-	/*
-	 * Create a tuple so as to be able to look up a connection
-	 */
-	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u3.ip = sis->src_ip;
-	tuple.src.u.all = (__be16)sis->src_port;
-	tuple.src.l3num = AF_INET;
-
-	tuple.dst.u3.ip = sis->dest_ip;
-	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
-	tuple.dst.protonum = (uint8_t)sis->protocol;
-	tuple.dst.u.all = (__be16)sis->dest_port;
-
-	DEBUG_TRACE("update connection - p: %d, s: %pI4:%u, d: %pI4:%u\n",
-		    (int)tuple.dst.protonum,
-		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
-		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
-
-	/*
-	 * Look up conntrack connection
-	 */
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
-	if (unlikely(!h)) {
-		DEBUG_TRACE("no connection found\n");
-		return;
-	}
-
-	ct = nf_ct_tuplehash_to_ctrack(h);
-	NF_CT_ASSERT(ct->timeout.data == (unsigned long)ct);
-
-	/*
-	 * Only update if this is not a fixed timeout
-	 */
-	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
-		ct->timeout.expires += sis->delta_jiffies;
-	}
-
-	acct = nf_conn_acct_find(ct);
-	if (acct) {
-		spin_lock_bh(&ct->lock);
-		atomic64_add(sis->src_packet_count, &acct[IP_CT_DIR_ORIGINAL].packets);
-		atomic64_add(sis->src_byte_count, &acct[IP_CT_DIR_ORIGINAL].bytes);
-		atomic64_add(sis->dest_packet_count, &acct[IP_CT_DIR_REPLY].packets);
-		atomic64_add(sis->dest_byte_count, &acct[IP_CT_DIR_REPLY].bytes);
-		spin_unlock_bh(&ct->lock);
-	}
-
-	switch (sis->protocol) {
-	case IPPROTO_TCP:
-		spin_lock_bh(&ct->lock);
-		if (ct->proto.tcp.seen[0].td_maxwin < sis->src_td_max_window) {
-			ct->proto.tcp.seen[0].td_maxwin = sis->src_td_max_window;
-		}
-		if ((int32_t)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
-			ct->proto.tcp.seen[0].td_end = sis->src_td_end;
-		}
-		if ((int32_t)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
-			ct->proto.tcp.seen[0].td_maxend = sis->src_td_max_end;
-		}
-		if (ct->proto.tcp.seen[1].td_maxwin < sis->dest_td_max_window) {
-			ct->proto.tcp.seen[1].td_maxwin = sis->dest_td_max_window;
-		}
-		if ((int32_t)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
-			ct->proto.tcp.seen[1].td_end = sis->dest_td_end;
-		}
-		if ((int32_t)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
-			ct->proto.tcp.seen[1].td_maxend = sis->dest_td_max_end;
-		}
-		spin_unlock_bh(&ct->lock);
-		break;
-	}
-
-	/*
-	 * Release connection
-	 */
-	nf_ct_put(ct);
-}
-
-/*
  * sfe_ipv4_sync_sfe_ipv4_connection()
  *	Sync a connection.
  *
@@ -1227,7 +973,9 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_i
 	struct sfe_ipv4_sync sis;
 	uint64_t now_jiffies;
 	bool pending_free = false;
+	sfe_ipv4_sync_rule_callback_t sync_rule_callback;
 
+	rcu_read_lock();
 	spin_lock(&si->lock);
 	si->connection_flushes++;
 
@@ -1255,14 +1003,20 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_i
 		}
 	}
 
+	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+
 	spin_unlock(&si->lock);
 
-	/*
-	 * Generate a sync message and then sync.
-	 */
-	now_jiffies = get_jiffies_64();
-	sfe_ipv4_gen_sync_sfe_ipv4_connection(si, c, &sis, now_jiffies);
-	sfe_ipv4_sync_rule(&sis);
+	if (sync_rule_callback) {
+		/*
+		 * Generate a sync message and then sync.
+		 */
+		now_jiffies = get_jiffies_64();
+		sfe_ipv4_gen_sync_sfe_ipv4_connection(si, c, &sis, now_jiffies);
+		sync_rule_callback(&sis);
+	}
+
+	rcu_read_unlock();
 
 	/*
 	 * If we can't yet free the underlying memory then we're done.
@@ -2217,13 +1971,9 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
  *
  * Returns 1 if the packet is forwarded or 0 if it isn't.
  */
-static int sfe_ipv4_recv(struct sk_buff *skb)
+int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 {
 	struct sfe_ipv4 *si = &__si;
-	struct net_device *dev;
-#if (SFE_HOOK_ABOVE_BRIDGE)
-	struct in_device *in_dev;
-#endif
 	unsigned int len;
 	unsigned int tot_len;
 	unsigned int frag_off;
@@ -2232,43 +1982,6 @@ static int sfe_ipv4_recv(struct sk_buff *skb)
 	bool ip_options;
 	struct sfe_ipv4_iphdr *iph;
 	uint32_t protocol;
-
-	/*
-	 * We know that for the vast majority of packets we need the transpor
-	 * layer header so we may as well start to fetch it now!
-	 */
-	prefetch(skb->data + 32);
-	barrier();
-
-	dev = skb->dev;
-
-#if (SFE_HOOK_ABOVE_BRIDGE)
-	/*
-	 * Does our input device support IP processing?
-	 */
-	in_dev = (struct in_device *)dev->ip_ptr;
-	if (unlikely(!in_dev)) {
-		DEBUG_TRACE("no IP processing for device: %s\n", dev->name);
-		return 0;
-	}
-
-	/*
-	 * Does it have an IP address?  If it doesn't then we can't do anything
-	 * interesting here!
-	 */
-	if (unlikely(!in_dev->ifa_list)) {
-		DEBUG_TRACE("no IP address for device: %s\n", dev->name);
-		return 0;
-	}
-#endif
-
-	/*
-	 * We're only interested in IP packets.
-	 */	
-	if (unlikely(htons(ETH_P_IP) != skb->protocol)) {
-		DEBUG_TRACE("not IP packet\n");
-		return 0;
-	}
 
 	/*
 	 * Check that we have space for an IP header here.
@@ -2387,78 +2100,12 @@ static int sfe_ipv4_recv(struct sk_buff *skb)
 }
 
 /*
- * sfe_ipv4_find_mac_addr()
- *	Find the MAC address for a given IPv4 address.
- *
- * Returns true if we find the MAC address, otherwise false.
- *
- * We look up the rtable entry for the address and, from its neighbour
- * structure, obtain the hardware address.  This means this function also
- * works if the neighbours are routers too.
- */
-static bool sfe_ipv4_find_mac_addr(uint32_t addr, uint8_t *mac_addr)
-{
-	struct neighbour *neigh;
-	struct rtable *rt;
-	struct dst_entry *dst;
-	struct net_device *dev;
-
-	/*
-	 * Look up the rtable entry for the IP address then get the hardware
-	 * address from its neighbour structure.  This means this work when the
-	 * neighbours are routers too.
-	 */
-	rt = ip_route_output(&init_net, addr, 0, 0, 0);
-	if (unlikely(IS_ERR(rt))) {
-		return false;
-	}
-
-	dst = (struct dst_entry *)rt;
-
-	rcu_read_lock();
-	neigh = dst_get_neighbour_noref(dst);
-	if (unlikely(!neigh)) {
-		rcu_read_unlock();
-		dst_release(dst);
-		return false; 
-	}
-
-	if (unlikely(!(neigh->nud_state & NUD_VALID))) {
-		rcu_read_unlock();
-		dst_release(dst);
-		return false;
-	}
-
-	dev = neigh->dev;
-	if (!dev) {
-		rcu_read_unlock();
-		dst_release(dst);
-		return false;
-	}
-
-	memcpy(mac_addr, neigh->ha, (size_t)dev->addr_len);
-	rcu_read_unlock();
-
-	dst_release(dst);
-
-	/*
-	 * We're only interested in unicast MAC addresses - if it's not a unicast
-	 * address then our IP address mustn't be unicast either.
-	 */
-	if (is_multicast_ether_addr(mac_addr)) {
-		DEBUG_TRACE("MAC is non-unicast - ignoring\n");
-		return false;
-	}
-
-	return true;
-}
-
-/*
  * sfe_ipv4_create_rule()
  *	Create a forwarding rule.
  */
-static void sfe_ipv4_create_rule(struct sfe_ipv4 *si, struct sfe_ipv4_create *sic)
+void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 {
+	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
 	struct sfe_ipv4_connection_match *original_cm;
 	struct sfe_ipv4_connection_match *reply_cm;
@@ -2684,307 +2331,12 @@ static void sfe_ipv4_create_rule(struct sfe_ipv4 *si, struct sfe_ipv4_create *si
 }
 
 /*
- * sfe_ipv4_post_routing_hook()
- *	Called for packets about to leave the box - either locally generated or forwarded from another interface
- */
-static unsigned int sfe_ipv4_post_routing_hook(unsigned int hooknum,
-					       struct sk_buff *skb,
-					       const struct net_device *in_unused,
-					       const struct net_device *out,
-					       int (*okfn)(struct sk_buff *))
-{
-	struct sfe_ipv4 *si = &__si;
-	struct sfe_ipv4_create sic;
-	struct net_device *in;
-	struct nf_conn *ct;
-	enum ip_conntrack_info ctinfo;
-	struct net_device *src_dev;
-	struct net_device *dest_dev;
-	struct net_device *src_br_dev = NULL;
-	struct net_device *dest_br_dev = NULL;
-	struct nf_conntrack_tuple orig_tuple;
-	struct nf_conntrack_tuple reply_tuple;
-
-	/*
-	 * If operations have paused then do not process packets.
-	 */
-	spin_lock_bh(&si->lock);
-	if (unlikely(si->pause)) {
-		DEBUG_TRACE("paused, ignoring\n");
-		spin_unlock_bh(&si->lock);
-		return NF_ACCEPT;
-	}
-
-	spin_unlock_bh(&si->lock);
-
-	/*
-	 * Don't process broadcast or multicast packets.
-	 */
-	if (unlikely(skb->pkt_type == PACKET_BROADCAST)) {
-		DEBUG_TRACE("broadcast, ignoring\n");
-		return NF_ACCEPT;
-	}
-	if (unlikely(skb->pkt_type == PACKET_MULTICAST)) {
-		DEBUG_TRACE("multicast, ignoring\n");
-		return NF_ACCEPT;
-	}
-
-	/*
-	 * Don't process packets that are not being forwarded.
-	 */
-	in = dev_get_by_index(&init_net, skb->skb_iif);
-	if  (!in) {
-		DEBUG_TRACE("packet not forwarding\n");
-		return NF_ACCEPT;
-	}
-
-	/*
-	 * Don't process packets with non-standard 802.3 MAC address sizes.
-	 */
-	if (unlikely(in->addr_len != ETH_ALEN)) {
-		DEBUG_TRACE("in device: %s not 802.3 hw addr len: %u, ignoring\n",
-				in->name, (unsigned)in->addr_len);
-		goto done1;
-	}
-	if (unlikely(out->addr_len != ETH_ALEN)) {
-		DEBUG_TRACE("out device: %s not 802.3 hw addr len: %u, ignoring\n",
-				out->name, (unsigned)out->addr_len);
-		goto done1;
-	}
-
-	/*
-	 * Don't process packets that aren't being tracked by conntrack.
-	 */
-	ct = nf_ct_get(skb, &ctinfo);
-	if (unlikely(!ct)) {
-		DEBUG_TRACE("no conntrack connection, ignoring\n");
-		goto done1;
-	}
-
-	/*
-	 * Don't process untracked connections.
-	 */
-	if (unlikely(ct == &nf_conntrack_untracked)) {
-		DEBUG_TRACE("untracked connection\n");
-		goto done1;
-	}
-
-	/*
-	 * Don't process connections that require support from a 'helper' (typically a NAT ALG).
-	 */
-	if (unlikely(nfct_help(ct))) {
-		DEBUG_TRACE("connection has helper\n");
-		goto done1;
-	}
-
-	/*
-	 * Look up the details of our connection in conntrack.
-	 *
-	 * Note that the data we get from conntrack is for the "ORIGINAL" direction
-	 * but our packet may actually be in the "REPLY" direction.
-	 */
-	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	reply_tuple = ct->tuplehash[IP_CT_DIR_REPLY].tuple;
-	sic.protocol = (int32_t)orig_tuple.dst.protonum;
-
-	/*
-	 * Get addressing information, non-NAT first
-	 */
-	sic.src_ip = (__be32)orig_tuple.src.u3.ip;
-	sic.dest_ip = (__be32)orig_tuple.dst.u3.ip;
-
-	/*
-	 * NAT'ed addresses - note these are as seen from the 'reply' direction
-	 * When NAT does not apply to this connection these will be identical to the above.
-	 */
-	sic.src_ip_xlate = (__be32)reply_tuple.dst.u3.ip;
-	sic.dest_ip_xlate = (__be32)reply_tuple.src.u3.ip;
-
-	sic.flags = 0;
-
-	switch (sic.protocol) {
-	case IPPROTO_TCP:
-		sic.src_port = orig_tuple.src.u.tcp.port;
-		sic.dest_port = orig_tuple.dst.u.tcp.port;
-		sic.src_port_xlate = reply_tuple.dst.u.tcp.port;
-		sic.dest_port_xlate = reply_tuple.src.u.tcp.port;
-		sic.src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
-		sic.src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
-		sic.src_td_end = ct->proto.tcp.seen[0].td_end;
-		sic.src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
-		sic.dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
-		sic.dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
-		sic.dest_td_end = ct->proto.tcp.seen[1].td_end;
-		sic.dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
-		if (nf_ct_tcp_no_window_check
-		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
-		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
-			sic.flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
-		}
-
-		/*
-		 * Don't try to manage a non-established connection.
-		 */
-		if (!test_bit(IPS_ASSURED_BIT, &ct->status)) {
-			DEBUG_TRACE("non-established connection\n");
-			goto done1;
-		}
-
-		/*
-		 * If the connection is shutting down do not manage it.
-		 * state can not be SYN_SENT, SYN_RECV because connection is assured
-		 * Not managed states: FIN_WAIT, CLOSE_WAIT, LAST_ACK, TIME_WAIT, CLOSE.
-		 */
-		spin_lock_bh(&ct->lock);
-		if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
-			spin_unlock_bh(&ct->lock);
-			DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
-				    ct->proto.tcp.state, &sic.src_ip, ntohs(sic.src_port),
-				    &sic.dest_ip, ntohs(sic.dest_port));
-			goto done1;
-		}
-		spin_unlock_bh(&ct->lock);
-		break;
-
-	case IPPROTO_UDP:
-		sic.src_port = orig_tuple.src.u.udp.port;
-		sic.dest_port = orig_tuple.dst.u.udp.port;
-		sic.src_port_xlate = reply_tuple.dst.u.udp.port;
-		sic.dest_port_xlate = reply_tuple.src.u.udp.port;
-		break;
-
-	default:
-		DEBUG_TRACE("unhandled protocol %d\n", sic.protocol);
-		goto done1;
-	}
-
-	/*
-	 * Get the MAC addresses that correspond to source and destination host addresses.
-	 */
-	if (!sfe_ipv4_find_mac_addr(sic.src_ip, sic.src_mac)) {
-		DEBUG_TRACE("failed to find MAC address for src IP: %pI4\n", &sic.src_ip);
-		goto done1;
-	}
-
-	if (!sfe_ipv4_find_mac_addr(sic.src_ip_xlate, sic.src_mac_xlate)) {
-		DEBUG_TRACE("failed to find MAC address for xlate src IP: %pI4\n", &sic.src_ip_xlate);
-		goto done1;
-	}
-
-	/*
-	 * Do dest now
-	 */
-	if (!sfe_ipv4_find_mac_addr(sic.dest_ip, sic.dest_mac)) {
-		DEBUG_TRACE("failed to find MAC address for dest IP: %pI4\n", &sic.dest_ip);
-		goto done1;
-	}
-
-	if (!sfe_ipv4_find_mac_addr(sic.dest_ip_xlate, sic.dest_mac_xlate)) {
-		DEBUG_TRACE("failed to find MAC address for xlate dest IP: %pI4\n", &sic.dest_ip_xlate);
-		goto done1;
-	}
-
-	/*
-	 * Get our device info.  If we're dealing with the "reply" direction here then
-	 * we'll need things swapped around.
-	 */
-	if (ctinfo < IP_CT_IS_REPLY) {
-		src_dev = in;
-		dest_dev = (struct net_device *)out;
-	} else {
-		src_dev = (struct net_device *)out;
-		dest_dev = in;
-	}
-
-#if (!SFE_HOOK_ABOVE_BRIDGE)
-	/*
-	 * Now our devices may actually be a bridge interface.  If that's
-	 * the case then we need to hunt down the underlying interface.
-	 */
-	if (src_dev->priv_flags & IFF_EBRIDGE) {
-		src_br_dev = br_port_dev_get(src_dev, sic.src_mac);
-		if (!src_br_dev) {
-			DEBUG_TRACE("no port found on bridge\n");
-			goto done1;
-		}
-
-		src_dev = src_br_dev;
-	}
-
-	if (dest_dev->priv_flags & IFF_EBRIDGE) {
-		dest_br_dev = br_port_dev_get(dest_dev, sic.dest_mac_xlate);
-		if (!dest_br_dev) {
-			DEBUG_TRACE("no port found on bridge\n");
-			goto done2;
-		}
-
-		dest_dev = dest_br_dev;
-	}
-#else
-	/*
-	 * Our devices may actually be part of a bridge interface.  If that's
-	 * the case then find the bridge interface instead.
-	 */
-	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
-		src_br_dev = src_dev->master;
-		if (!src_br_dev) {
-			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
-			goto done1;
-		}
-
-		dev_hold(src_br_dev);
-		src_dev = src_br_dev;
-	}
-
-	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
-		dest_br_dev = dest_dev->master;
-		if (!dest_br_dev) {
-			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
-			goto done2;
-		}
-
-		dev_hold(dest_br_dev);
-		dest_dev = dest_br_dev;
-	}
-#endif
-
-	sic.src_dev = src_dev;
-	sic.dest_dev = dest_dev;
-
-// XXX - these MTUs need handling correctly!
-	sic.src_mtu = 1500;
-	sic.dest_mtu = 1500;
-
-	sfe_ipv4_create_rule(si, &sic);
-
-	/*
-	 * If we had bridge ports then release them too.
-	 */
-	if (dest_br_dev) {
-		dev_put(dest_br_dev);
-	}
-
-done2:
-	if (src_br_dev) {
-		dev_put(src_br_dev);
-	}
-
-done1:
-	/*
-	 * Release the interface on which this skb arrived
-	 */
-	dev_put(in);
-
-	return NF_ACCEPT;
-}
-
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-/*
  * sfe_ipv4_destroy_rule()
  *	Destroy a forwarding rule.
  */
-static void sfe_ipv4_destroy_rule(struct sfe_ipv4 *si, struct sfe_ipv4_destroy *sid)
+void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid)
 {
+	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
 
 	spin_lock_bh(&si->lock);
@@ -3026,153 +2378,16 @@ static void sfe_ipv4_destroy_rule(struct sfe_ipv4 *si, struct sfe_ipv4_destroy *
 }
 
 /*
- * sfe_ipv4_conntrack_event()
- *	Callback event invoked when a conntrack connection's state changes.
+ * sfe_ipv4_register_sync_rule_callback()
+ *	Register a callback for rule synchronization.
  */
-static int sfe_ipv4_conntrack_event(unsigned int events, struct nf_ct_event *item)
+void sfe_ipv4_register_sync_rule_callback(sfe_ipv4_sync_rule_callback_t sync_rule_callback)
 {
 	struct sfe_ipv4 *si = &__si;
-	struct sfe_ipv4_destroy sid;
-	struct nf_conn *ct = item->ct;
-	struct nf_conntrack_tuple orig_tuple;
-
-	/*
-	 * If we don't have a conntrack entry then we're done.
-	 */
-	if (unlikely(!ct)) {
-		DEBUG_WARN("no ct in conntrack event callback\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
-	 * If this is an untracked connection then we can't have any state either.
-	 */
-	if (unlikely(ct == &nf_conntrack_untracked)) {
-		DEBUG_TRACE("ignoring untracked conn\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
-	 * Ignore anything other than IPv4 connections.
-	 */
-	if (unlikely(nf_ct_l3num(ct) != AF_INET)) {
-		DEBUG_TRACE("ignoring non-IPv4 conn\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
-	 * We're only interested in destroy events.
-	 */
-	if (unlikely(!(events & (1 << IPCT_DESTROY)))) {
-		DEBUG_TRACE("ignoring non-destroy event\n");
-		return NOTIFY_DONE;
-	}
-
-	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	sid.protocol = (int32_t)orig_tuple.dst.protonum;
-
-	/*
-	 * Extract information from the conntrack connection.  We're only interested
-	 * in nominal connection information (i.e. we're ignoring any NAT information).
-	 */
-	sid.src_ip = (__be32)orig_tuple.src.u3.ip;
-	sid.dest_ip = (__be32)orig_tuple.dst.u3.ip;
-
-	switch (sid.protocol) {
-	case IPPROTO_TCP:
-		sid.src_port = orig_tuple.src.u.tcp.port;
-		sid.dest_port = orig_tuple.dst.u.tcp.port;
-		break;
-
-	case IPPROTO_UDP:
-		sid.src_port = orig_tuple.src.u.udp.port;
-		sid.dest_port = orig_tuple.dst.u.udp.port;
-		break;
-
-	default:
-		DEBUG_TRACE("unhandled protocol: %d\n", sid.protocol);
-		return NOTIFY_DONE;
-	}
-
-
-	sfe_ipv4_destroy_rule(si, &sid);
-	return NOTIFY_DONE;
-}
-
-/*
- * Netfilter conntrack event system to monitor connection tracking changes
- */
-static struct nf_ct_event_notifier sfe_ipv4_conntrack_notifier = {
-	.fcn = sfe_ipv4_conntrack_event,
-};
-#endif
-
-/*
- * Structure to establish a hook into the post routing netfilter point - this
- * will pick up local outbound and packets going from one interface to another.
- *
- * Note: see include/linux/netfilter_ipv4.h for info related to priority levels.
- * We want to examine packets after NAT translation and any ALG processing.
- */
-static struct nf_hook_ops sfe_ipv4_ops_post_routing[] __read_mostly = {
-	{
-		.hook = sfe_ipv4_post_routing_hook,
-		.owner = THIS_MODULE,
-		.pf = PF_INET,
-		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP_PRI_NAT_SRC + 1,
-	},
-};
-
-/*
- * sfe_ipv4_get_pause()
- */
-static ssize_t sfe_ipv4_get_pause(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
-{
-	struct sfe_ipv4 *si = &__si;
-	ssize_t count;
-	int num;
 
 	spin_lock_bh(&si->lock);
-	num = si->pause;
+	rcu_assign_pointer(si->sync_rule_callback, sync_rule_callback);
 	spin_unlock_bh(&si->lock);
-
-	count = snprintf(buf, (ssize_t)PAGE_SIZE, "%d\n", num);
-	return count;
-}
-
-/*
- * sfe_ipv4_set_pause()
- */
-static ssize_t sfe_ipv4_set_pause(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct sfe_ipv4 *si = &__si;
-	char num_buf[12];
-	int num;
-
-	/*
-	 * Check that our command data will fit.  If it will then copy it to our local
-	 * buffer and NUL terminate it.
-	 */
-	if (count > 11) {
-		return 0;
-	}
-
-	memcpy(num_buf, buf, count);
-	num_buf[count] = '\0';
-
-	sscanf(num_buf, "%d", &num);
-	DEBUG_TRACE("set pause: %d\n", num);
-
-	spin_lock_bh(&si->lock);
-	si->pause = num;
-	spin_unlock_bh(&si->lock);
-
-	return count;
 }
 
 /*
@@ -3195,21 +2410,20 @@ static ssize_t sfe_ipv4_get_debug_dev(struct device *dev,
 }
 
 /*
- * sysfs attributes for the default classifier itself.
+ * sysfs attributes.
  */
-static const struct device_attribute sfe_ipv4_pause_attr =
-	__ATTR(pause, S_IWUGO | S_IRUGO, sfe_ipv4_get_pause, sfe_ipv4_set_pause);
 static const struct device_attribute sfe_ipv4_debug_dev_attr =
 	__ATTR(debug_dev, S_IWUGO | S_IRUGO, sfe_ipv4_get_debug_dev, NULL);
 
 /*
- * sfe_ipv4_destroy_all()
+ * sfe_ipv4_destroy_all_rules_for_dev()
  *	Destroy all connections that match a particular device.
  *
  * If we pass dev as NULL then this destroys all connections.
  */
-static void sfe_ipv4_destroy_all(struct sfe_ipv4 *si, struct net_device *dev)
+void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev)
 {
+	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
 	struct sfe_ipv4_connection *c_next;
 
@@ -3275,34 +2489,6 @@ static void sfe_ipv4_destroy_all(struct sfe_ipv4 *si, struct net_device *dev)
 }
 
 /*
- * sfe_ipv4_device_event()
- */
-static int sfe_ipv4_device_event(struct notifier_block *this, unsigned long event, void *ptr)
-{
-	struct sfe_ipv4 *si = &__si;
-	struct net_device *dev = (struct net_device *)ptr;
-
-	switch (event) {
-	case NETDEV_DOWN:
-		if (dev) {
-			sfe_ipv4_destroy_all(si, dev);
-		}
-		break;
-	}
-
-	return NOTIFY_DONE;
-}
-
-/*
- * sfe_ipv4_inet_event()
- */
-static int sfe_ipv4_inet_event(struct notifier_block *this, unsigned long event, void *ptr)
-{
-	struct net_device *dev = ((struct in_ifaddr *)ptr)->ifa_dev->dev;
-	return sfe_ipv4_device_event(this, event, dev);
-}
-
-/*
  * sfe_ipv4_periodic_sync()
  */
 static void sfe_ipv4_periodic_sync(unsigned long arg)
@@ -3310,8 +2496,16 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 	struct sfe_ipv4 *si = (struct sfe_ipv4 *)arg;
 	uint64_t now_jiffies;
 	int quota;
+	sfe_ipv4_sync_rule_callback_t sync_rule_callback;
 
 	now_jiffies = get_jiffies_64();
+
+	rcu_read_lock();
+	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+	if (!sync_rule_callback) {
+		rcu_read_unlock();
+		goto done;
+	}
 
 	spin_lock_bh(&si->lock);
 	sfe_ipv4_update_summary_stats(si);
@@ -3382,12 +2576,14 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 		 * We don't want to be holding the lock when we sync!
 		 */
 		spin_unlock_bh(&si->lock);
-		sfe_ipv4_sync_rule(&sis);
+		sync_rule_callback(&sis);
 		spin_lock_bh(&si->lock);
 	}
 
 	spin_unlock_bh(&si->lock);
+	rcu_read_unlock();
 
+done:
 	mod_timer(&si->timer, jiffies + (HZ / 100));
 }
 
@@ -3901,7 +3097,7 @@ static int __init sfe_ipv4_init(void)
 	struct sfe_ipv4 *si = &__si;
 	int result = -1;
 
-	DEBUG_INFO("SFE init\n");
+	DEBUG_INFO("SFE IPv4 init\n");
 
 	/*
 	 * Create sys/sfe_ipv4
@@ -3915,12 +3111,6 @@ static int __init sfe_ipv4_init(void)
 	/*
 	 * Create files, one for each parameter supported by this module.
 	 */
-	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_pause_attr.attr);
-	if (result) {
-		DEBUG_ERROR("failed to register pause file: %d\n", result);
-		goto exit3;
-	}
-
 	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
@@ -3937,13 +3127,6 @@ static int __init sfe_ipv4_init(void)
 	}
 
 	si->debug_dev = result;
-	si->dev_notifier.notifier_call = sfe_ipv4_device_event;
-	si->dev_notifier.priority = 1;
-	register_netdevice_notifier(&si->dev_notifier);
-
-	si->inet_notifier.notifier_call = sfe_ipv4_inet_event;
-	si->inet_notifier.priority = 1;
-	register_inetaddr_notifier(&si->inet_notifier);
 
 	/*
 	 * Create a timer to handle periodic statistics.
@@ -3951,50 +3134,14 @@ static int __init sfe_ipv4_init(void)
 	setup_timer(&si->timer, sfe_ipv4_periodic_sync, (unsigned long)si);
 	mod_timer(&si->timer, jiffies + (HZ / 100));
 
-	/*
-	 * Register our netfilter hooks.
-	 */
-	result = nf_register_hooks(sfe_ipv4_ops_post_routing, ARRAY_SIZE(sfe_ipv4_ops_post_routing));
-	if (result < 0) {
-		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
-		goto exit6;
-	}
-
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-	/*
-	 * Register a notifier hook to get fast notifications of expired connections.
-	 */
-	result = nf_conntrack_register_notifier(&init_net, &sfe_ipv4_conntrack_notifier);
-	if (result < 0) {
-		DEBUG_ERROR("can't register nf notifier hook: %d\n", result);
-		goto exit7;
-	}
-#endif
-
 	spin_lock_init(&si->lock);
 
-	BUG_ON(athrs_fast_nat_recv != NULL);
-	RCU_INIT_POINTER(athrs_fast_nat_recv, sfe_ipv4_recv);
 	return 0;
-
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-exit7:
-#endif
-	nf_unregister_hooks(sfe_ipv4_ops_post_routing, ARRAY_SIZE(sfe_ipv4_ops_post_routing));
-	del_timer_sync(&si->timer);
-
-exit6:
-	unregister_inetaddr_notifier(&si->inet_notifier);
-	unregister_netdevice_notifier(&si->dev_notifier);
-	unregister_chrdev(si->debug_dev, "sfe_ipv4");
 
 exit5:
 	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 
 exit4:
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_pause_attr.attr);
-
-exit3:
 	kobject_put(si->sys_sfe_ipv4);
 
 exit1:
@@ -4008,36 +3155,20 @@ static void __exit sfe_ipv4_exit(void)
 {
 	struct sfe_ipv4 *si = &__si;
 
-	DEBUG_INFO("SFE exit\n");
-
-	RCU_INIT_POINTER(athrs_fast_nat_recv, NULL);
-
-	/*
-	 * Wait for all callbacks to complete.
-	 */
-	rcu_barrier();
+	DEBUG_INFO("SFE IPv4 exit\n");
 
 	/*
 	 * Destroy all connections.
 	 */
-	sfe_ipv4_destroy_all(si, NULL);
+	sfe_ipv4_destroy_all_rules_for_dev(NULL);
 
 // XXX - this is where we need to unregister with any lower level offload services.
 
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_conntrack_unregister_notifier(&init_net, &sfe_ipv4_conntrack_notifier);
-
-#endif
-	nf_unregister_hooks(sfe_ipv4_ops_post_routing, ARRAY_SIZE(sfe_ipv4_ops_post_routing));
 	del_timer_sync(&si->timer);
 
-	unregister_inetaddr_notifier(&si->inet_notifier);
-	unregister_netdevice_notifier(&si->dev_notifier);
 	unregister_chrdev(si->debug_dev, "sfe_ipv4");
 
 	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
-
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_pause_attr.attr);
 
 	kobject_put(si->sys_sfe_ipv4);
 
@@ -4045,6 +3176,12 @@ static void __exit sfe_ipv4_exit(void)
 
 module_init(sfe_ipv4_init)
 module_exit(sfe_ipv4_exit)
+
+EXPORT_SYMBOL(sfe_ipv4_recv);
+EXPORT_SYMBOL(sfe_ipv4_create_rule);
+EXPORT_SYMBOL(sfe_ipv4_destroy_rule);
+EXPORT_SYMBOL(sfe_ipv4_destroy_all_rules_for_dev);
+EXPORT_SYMBOL(sfe_ipv4_register_sync_rule_callback);
 
 MODULE_AUTHOR("Qualcomm Atheros Inc.");
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - IPv4 edition");

@@ -216,8 +216,6 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 	return 0;
 }
 
-#if 1
-
 /*
  * fast_classifier_ipv4_post_routing_hook()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
@@ -499,7 +497,6 @@ done1:
 
 	return NF_ACCEPT;
 }
-#endif
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 /*
@@ -583,7 +580,6 @@ static struct nf_ct_event_notifier fast_classifier_conntrack_notifier = {
 };
 #endif
 
-#if 1
 /*
  * Structure to establish a hook into the post routing netfilter point - this
  * will pick up local outbound and packets going from one interface to another.
@@ -600,7 +596,6 @@ static struct nf_hook_ops fast_classifier_ipv4_ops_post_routing[] __read_mostly 
 		.priority = NF_IP_PRI_NAT_SRC + 1,
 	},
 };
-#endif
 
 /*
  * fast_classifier_sync_rule()
@@ -746,7 +741,6 @@ static int __init fast_classifier_init(void)
 	sc->inet_notifier.priority = 1;
 	register_inetaddr_notifier(&sc->inet_notifier);
 
-#if 1
 	/*
 	 * Register our netfilter hooks.
 	 */
@@ -755,7 +749,6 @@ static int __init fast_classifier_init(void)
 		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
 		goto exit6;
 	}
-#endif
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	/*
@@ -800,9 +793,7 @@ exit8:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 exit7:
 #endif
-#if 1
 	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
-#endif
 
 exit6:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
@@ -850,9 +841,7 @@ static void __exit fast_classifier_exit(void)
 	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
 
 #endif
-#if 1
 	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
-#endif
 
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);

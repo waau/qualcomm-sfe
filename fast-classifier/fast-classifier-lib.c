@@ -17,10 +17,12 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 	char dst_str[INET_ADDRSTRLEN];
 	struct fast_classifier_msg fc_msg;
 
+#ifdef DEBUG
 	printf("DEBUG: would offload: %d, %s, %s, %d, %d\n", proto,
 				inet_ntop(AF_INET, &src_saddr,  src_str, INET_ADDRSTRLEN),
 				inet_ntop(AF_INET, &dst_saddr,  dst_str, INET_ADDRSTRLEN),
 				sport, dport);
+#endif
 
 	fc_msg.proto = proto;
 	fc_msg.src_saddr = src_saddr;

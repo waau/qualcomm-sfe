@@ -457,7 +457,12 @@ done1:
  * sfe_cm_conntrack_event()
  *	Callback event invoked when a conntrack connection's state changes.
  */
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+static int sfe_cm_conntrack_event(struct notifier_block *this,
+			unsigned int events, struct nf_ct_event *item)
+#else
 static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
+#endif
 {
 	struct sfe_ipv4_destroy sid;
 	struct nf_conn *ct = item->ct;
@@ -529,9 +534,15 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 /*
  * Netfilter conntrack event system to monitor connection tracking changes
  */
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+static struct notifier_block sfe_cm_conntrack_notifier = {
+	.notifier_call = sfe_cm_conntrack_event,
+};
+#else
 static struct nf_ct_event_notifier sfe_cm_conntrack_notifier = {
 	.fcn = sfe_cm_conntrack_event,
 };
+#endif
 #endif
 
 /*

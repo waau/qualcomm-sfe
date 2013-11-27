@@ -457,6 +457,10 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		    p_sic->src_ip == sic.src_ip &&
 		    p_sic->dest_ip == sic.dest_ip ) {
 			DEBUG_TRACE("FOUND, SKIPPING\n");
+			if (skb->mark) {
+				DEBUG_TRACE("UPDATING MARK %x\n", skb->mark);
+			}
+			p_sic->mark = skb->mark;
 			spin_unlock_irqrestore(&sfe_connections_lock, flags);
 			goto done1;
 		} else {
@@ -564,6 +568,11 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	sic.src_mtu = 1500;
 	sic.dest_mtu = 1500;
 
+	if (skb->mark) {
+		DEBUG_TRACE("SKB MARK NON ZERO %x\n", skb->mark);
+	}
+	sic.mark = skb->mark;
+
 	conn = kmalloc(sizeof(struct sfe_connection), GFP_KERNEL);
 	if (conn == NULL) {
 		printk(KERN_CRIT "ERROR: no memory for sfe\n");
@@ -630,6 +639,29 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	int sfe_connections_size = 0;
 	unsigned long flags;
 
+	if (events & IPCT_MARK) {
+		struct sfe_ipv4_mark mark;
+		orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
+
+		mark.protocol = (int32_t)orig_tuple.dst.protonum;
+		mark.src_ip = (__be32)orig_tuple.src.u3.ip;
+		mark.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+		switch (mark.protocol) {
+		case IPPROTO_TCP:
+			mark.src_port = orig_tuple.src.u.tcp.port;
+			mark.dest_port = orig_tuple.dst.u.tcp.port;
+			break;
+		case IPPROTO_UDP:
+			mark.src_port = orig_tuple.src.u.udp.port;
+			mark.dest_port = orig_tuple.dst.u.udp.port;
+			break;
+		default:
+			break;
+		}
+
+		sfe_ipv4_mark_rule(&mark);
+	}
+
 	/*
 	 * If we don't have a conntrack entry then we're done.
 	 */
@@ -655,7 +687,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	}
 
 	/*
-	 * We're only interested in destroy events.
+	 * We're only interested in destroy events at this point
 	 */
 	if (unlikely(!(events & (1 << IPCT_DESTROY)))) {
 		DEBUG_TRACE("ignoring non-destroy event\n");

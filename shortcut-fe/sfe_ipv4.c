@@ -237,6 +237,7 @@ struct sfe_ipv4_connection {
 					/* Pointer to the previous entry in the list of all connections */
 	int iterators;			/* Number of iterators currently using this connection */
 	bool pending_free;		/* Flag that indicates that this connection should be freed after iteration */
+	uint32_t mark;			/* mark for outgoing packet */
 };
 
 /*
@@ -787,6 +788,27 @@ static inline struct sfe_ipv4_connection *sfe_ipv4_find_sfe_ipv4_connection(stru
 	 * So no need to re-order entry for these requests
 	 */
 	return c;
+}
+
+/*
+ * sfe_ipv4_mark_rule()
+ *	Updates the mark for a current offloaded connection
+ *
+ * Will take hash lock upon entry
+ */
+static void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark)
+{
+	struct sfe_ipv4 *si = &__si;
+	struct sfe_ipv4_connection *c;
+	spin_lock(&si->lock);
+	c = sfe_ipv4_find_sfe_ipv4_connection(si, mark->protocol,
+			mark->src_ip, mark->src_port,
+			mark->dest_ip, mark->dest_port);
+	if (c) {
+		DEBUG_TRACE("INFO: Matching connection found for mark, setting to: %x\n", mark);
+		c->mark = mark->mark;
+	}
+	spin_unlock(&si->lock);
 }
 
 /*
@@ -1756,6 +1778,14 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		eth->h_source[2] = htons(cm->xmit_src_mac[2]);
 	}
 
+	/*
+	 * Mark outgoing packet
+	 */
+	skb->mark = cm->connection->mark;
+	if (skb->mark) {
+		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
+	}
+
 	si->packets_forwarded++;
 	spin_unlock(&si->lock);
 
@@ -2280,6 +2310,7 @@ void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	c->dest_port_xlate = sic->dest_port_xlate;
 	c->reply_dev = sic->dest_dev;
 	c->reply_match = reply_cm;
+	c->mark = sic->mark;
 
 	c->last_sync_jiffies = get_jiffies_64();
 	c->iterators = 0;
@@ -3182,6 +3213,7 @@ EXPORT_SYMBOL(sfe_ipv4_create_rule);
 EXPORT_SYMBOL(sfe_ipv4_destroy_rule);
 EXPORT_SYMBOL(sfe_ipv4_destroy_all_rules_for_dev);
 EXPORT_SYMBOL(sfe_ipv4_register_sync_rule_callback);
+EXPORT_SYMBOL(sfe_ipv4_mark_rule);
 
 MODULE_AUTHOR("Qualcomm Atheros Inc.");
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - IPv4 edition");

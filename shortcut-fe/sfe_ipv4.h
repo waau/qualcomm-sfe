@@ -41,6 +41,7 @@ struct sfe_ipv4_create {
 	uint32_t dest_td_max_window;
 	uint32_t dest_td_end;
 	uint32_t dest_td_max_end;
+	uint32_t mark;
 };
 
 /*
@@ -90,3 +91,15 @@ extern void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid);
 extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
 extern void sfe_ipv4_register_sync_rule_callback(sfe_ipv4_sync_rule_callback_t callback);
 
+/*
+ * IPv4 connection mark structure
+ */
+struct sfe_ipv4_mark {
+	int protocol;
+	__be32 src_ip;
+	__be32 dest_ip;
+	__be16 src_port;
+	__be16 dest_port;
+	uint32_t mark;
+};
+static void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark);

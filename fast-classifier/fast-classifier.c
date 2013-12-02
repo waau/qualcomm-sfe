@@ -207,6 +207,7 @@ struct sfe_connection {
 	struct sfe_ipv4_create *sic;
 	struct nf_conn *ct;
 	int hits;
+	int offloaded;
 };
 
 static LIST_HEAD(sfe_connections);
@@ -292,16 +293,21 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 		    p_sic->dest_port == fc_msg->dport &&
 		    p_sic->src_ip == fc_msg->src_saddr &&
 		    p_sic->dest_ip == fc_msg->dst_saddr ) {
-			DEBUG_TRACE("FOUND, WILL OFFLOAD\n");
-			if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
+			if (conn->offloaded == 0) {
+				DEBUG_TRACE("USERSPACE OFFLOAD REQUEST, MATCH FOUND, WILL OFFLOAD\n");
+				if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
+					spin_unlock_irqrestore(&sfe_connections_lock, flags);
+					DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+					return 0;
+				}
+				DEBUG_TRACE("INFO: calling sfe rule creation!\n");
+				conn->offloaded = 1;
 				spin_unlock_irqrestore(&sfe_connections_lock, flags);
-				DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+				sfe_ipv4_create_rule(p_sic);
 				return 0;
 			}
-			DEBUG_TRACE("INFO: calling sfe rule creation!\n");
-			spin_unlock_irqrestore(&sfe_connections_lock, flags);
-			sfe_ipv4_create_rule(p_sic);
-			return 0;
+
+			DEBUG_TRACE("GOT REQUEST TO OFFLOAD ALREADY OFFLOADED CONN FROM USERSPACE\n");
 		}
 		DEBUG_TRACE("SEARCH CONTINUES\n");
 	}
@@ -474,18 +480,23 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			p_sic->mark = skb->mark;
 
 			conn->hits++;
-			if (conn->hits == 128) {
-				DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
-				if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
+			if (conn->offloaded == 0) {
+				if (conn->hits == 128) {
+					DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
+					if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
+						spin_unlock_irqrestore(&sfe_connections_lock, flags);
+						DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+						return 0;
+					}
+					DEBUG_TRACE("INFO: calling sfe rule creation!\n");
+					conn->offloaded = 1;
 					spin_unlock_irqrestore(&sfe_connections_lock, flags);
-					DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+					sfe_ipv4_create_rule(p_sic);
 					return 0;
+				} else if (conn->hits > 128) {
+					DEBUG_TRACE("ERROR: MORE THAN 128 HITS AND NOT OFFLOADED\n");
 				}
-				DEBUG_TRACE("INFO: calling sfe rule creation!\n");
-				spin_unlock_irqrestore(&sfe_connections_lock, flags);
-				sfe_ipv4_create_rule(p_sic);
-				return 0;
-			} else if (conn->hits > 128) {
+			} else if (conn->offloaded == 1) {
 				struct sfe_ipv4_mark mark;
 
 				DEBUG_TRACE("CONNECTION ALREADY OFFLOADED, UPDATING MARK\n");
@@ -496,16 +507,16 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 				mark.dest_port = p_sic->dest_port;
 				mark.mark = skb->mark;
 				sfe_ipv4_mark_rule(&mark);
+				sfe_ipv4_create_rule(p_sic);
 			}
 
 			DEBUG_TRACE("FOUND, SKIPPING\n");
 
 			spin_unlock_irqrestore(&sfe_connections_lock, flags);
 			goto done1;
-		} else {
-			DEBUG_TRACE("SEARCH CONTINUES");
 		}
 
+		DEBUG_TRACE("SEARCH CONTINUES");
 		sfe_connections_size++;
 	}
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
@@ -618,6 +629,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		goto done3;
 	}
 	conn->hits = 0;
+	conn->offloaded = 0;
 
 	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_KERNEL);
 	if (p_sic == NULL) {

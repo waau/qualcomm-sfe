@@ -206,9 +206,59 @@ struct sfe_connection {
 	struct list_head list;
 	struct sfe_ipv4_create *sic;
 	struct nf_conn *ct;
+	int hits;
 };
 
 static LIST_HEAD(sfe_connections);
+
+/*
+ * fast_classifier_update_protocol()
+ * 	Update sfe_ipv4_create struct with new protocol information before we offload
+ */
+static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct nf_conn *ct)
+{
+	switch (p_sic->protocol) {
+		case IPPROTO_TCP:
+			p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
+			p_sic->src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
+			p_sic->src_td_end = ct->proto.tcp.seen[0].td_end;
+			p_sic->src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
+			p_sic->dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
+			p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
+			p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
+			p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
+			if (nf_ct_tcp_no_window_check
+			    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
+			    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
+				p_sic->flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
+			}
+
+			/*
+			 * If the connection is shutting down do not manage it.
+			 * state can not be SYN_SENT, SYN_RECV because connection is assured
+			 * Not managed states: FIN_WAIT, CLOSE_WAIT, LAST_ACK, TIME_WAIT, CLOSE.
+			 */
+			spin_lock(&ct->lock);
+			if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
+				spin_unlock(&ct->lock);
+				DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
+					    ct->proto.tcp.state, &p_sic->src_ip, ntohs(p_sic->src_port),
+					    &p_sic->dest_ip, ntohs(p_sic->dest_port));
+				return 0;
+			}
+			spin_unlock(&ct->lock);
+			break;
+
+		case IPPROTO_UDP:
+			break;
+
+		default:
+			DEBUG_TRACE("unhandled protocol %d\n", p_sic->protocol);
+			return 0;
+	}
+
+	return 1;
+}
 
 /*
  * fast_classifier_recv_genl_msg()
@@ -231,7 +281,6 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 				fc_msg->sport, fc_msg->dport);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 	list_for_each_entry(conn, &sfe_connections, list) {
-		struct nf_conn *ct = conn->ct;
 		p_sic = conn->sic;
 
 		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d...",
@@ -244,48 +293,11 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 		    p_sic->src_ip == fc_msg->src_saddr &&
 		    p_sic->dest_ip == fc_msg->dst_saddr ) {
 			DEBUG_TRACE("FOUND, WILL OFFLOAD\n");
-			switch (p_sic->protocol) {
-				case IPPROTO_TCP:
-					p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
-					p_sic->src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
-					p_sic->src_td_end = ct->proto.tcp.seen[0].td_end;
-					p_sic->src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
-					p_sic->dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
-					p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
-					p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
-					p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
-					if (nf_ct_tcp_no_window_check
-					    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
-					    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
-						p_sic->flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
-					}
-
-					/*
-					 * If the connection is shutting down do not manage it.
-					 * state can not be SYN_SENT, SYN_RECV because connection is assured
-					 * Not managed states: FIN_WAIT, CLOSE_WAIT, LAST_ACK, TIME_WAIT, CLOSE.
-					 */
-					spin_lock(&ct->lock);
-					if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
-						spin_unlock_bh(&ct->lock);
-						DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
-							    ct->proto.tcp.state, &p_sic->src_ip, ntohs(p_sic->src_port),
-							    &p_sic->dest_ip, ntohs(p_sic->dest_port));
-						spin_unlock_irqrestore(&sfe_connections_lock, flags);
-						return 0;
-					}
-					spin_unlock(&ct->lock);
-					break;
-
-				case IPPROTO_UDP:
-					break;
-
-				default:
-					DEBUG_TRACE("unhandled protocol %d\n", p_sic->protocol);
-					spin_unlock_irqrestore(&sfe_connections_lock, flags);
-					return 0;
+			if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
+				spin_unlock_irqrestore(&sfe_connections_lock, flags);
+				DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+				return 0;
 			}
-
 			DEBUG_TRACE("INFO: calling sfe rule creation!\n");
 			spin_unlock_irqrestore(&sfe_connections_lock, flags);
 			sfe_ipv4_create_rule(p_sic);
@@ -456,11 +468,38 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		    p_sic->dest_port == sic.dest_port &&
 		    p_sic->src_ip == sic.src_ip &&
 		    p_sic->dest_ip == sic.dest_ip ) {
-			DEBUG_TRACE("FOUND, SKIPPING\n");
 			if (skb->mark) {
 				DEBUG_TRACE("UPDATING MARK %x\n", skb->mark);
 			}
 			p_sic->mark = skb->mark;
+
+			conn->hits++;
+			if (conn->hits == 128) {
+				DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
+				if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
+					spin_unlock_irqrestore(&sfe_connections_lock, flags);
+					DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+					return 0;
+				}
+				DEBUG_TRACE("INFO: calling sfe rule creation!\n");
+				spin_unlock_irqrestore(&sfe_connections_lock, flags);
+				sfe_ipv4_create_rule(p_sic);
+				return 0;
+			} else if (conn->hits > 128) {
+				struct sfe_ipv4_mark mark;
+
+				DEBUG_TRACE("CONNECTION ALREADY OFFLOADED, UPDATING MARK\n");
+				mark.protocol = p_sic->protocol;
+				mark.src_ip = p_sic->src_ip;
+				mark.src_port = p_sic->src_port;
+				mark.dest_ip = p_sic->dest_ip;
+				mark.dest_port = p_sic->dest_port;
+				mark.mark = skb->mark;
+				sfe_ipv4_mark_rule(&mark);
+			}
+
+			DEBUG_TRACE("FOUND, SKIPPING\n");
+
 			spin_unlock_irqrestore(&sfe_connections_lock, flags);
 			goto done1;
 		} else {
@@ -578,6 +617,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		printk(KERN_CRIT "ERROR: no memory for sfe\n");
 		goto done3;
 	}
+	conn->hits = 0;
 
 	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_KERNEL);
 	if (p_sic == NULL) {

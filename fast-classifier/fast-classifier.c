@@ -316,6 +316,9 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 	return 0;
 }
 
+/* auto offload connection once we have this many packets*/
+static int offload_at_pkts = 128;
+
 /*
  * fast_classifier_ipv4_post_routing_hook()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
@@ -481,11 +484,12 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 
 			conn->hits++;
 			if (conn->offloaded == 0) {
-				if (conn->hits == 128) {
+				if (conn->hits == offload_at_pkts) {
 					DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
 					if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
 						spin_unlock_irqrestore(&sfe_connections_lock, flags);
 						DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+						sfe_ipv4_create_rule(p_sic);
 						return 0;
 					}
 					DEBUG_TRACE("INFO: calling sfe rule creation!\n");
@@ -493,8 +497,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					spin_unlock_irqrestore(&sfe_connections_lock, flags);
 					sfe_ipv4_create_rule(p_sic);
 					return 0;
-				} else if (conn->hits > 128) {
-					DEBUG_TRACE("ERROR: MORE THAN 128 HITS AND NOT OFFLOADED\n");
+				} else if (conn->hits > offload_at_pkts) {
+					DEBUG_ERROR("ERROR: MORE THAN %d HITS AND NOT OFFLOADED\n", offload_at_pkts);
 				}
 			} else if (conn->offloaded == 1) {
 				struct sfe_ipv4_mark mark;
@@ -964,6 +968,39 @@ static int fast_classifier_inet_event(struct notifier_block *this, unsigned long
 }
 
 /*
+ * fast_classifier_get_offload_at_pkts()
+ */
+static ssize_t fast_classifier_get_offload_at_pkts(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buf)
+{
+	return sprintf(buf, "%d\n", offload_at_pkts);
+}
+
+/*
+ * fast_classifier_set_offload_at_pkts()
+ */
+static ssize_t fast_classifier_set_offload_at_pkts(struct device *dev,
+					struct device_attribute *attr,
+					char *buf, size_t size)
+{
+	int new;
+
+	if (strict_strtol(buf, 0, &new) < 1)
+		return -EINVAL;
+
+	offload_at_pkts = new;
+
+	return size;
+}
+
+/*
+ * sysfs attributes.
+ */
+static const struct device_attribute fast_classifier_offload_at_pkts_attr =
+	__ATTR(offload_at_pkts, S_IWUGO | S_IRUGO, fast_classifier_get_offload_at_pkts, fast_classifier_set_offload_at_pkts);
+
+/*
  * fast_classifier_init()
  */
 static int __init fast_classifier_init(void)
@@ -983,6 +1020,12 @@ static int __init fast_classifier_init(void)
 		goto exit1;
 	}
 
+	result = sysfs_create_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
+	if (result) {
+		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
+		goto exit2;
+	}
+
 	sc->dev_notifier.notifier_call = fast_classifier_device_event;
 	sc->dev_notifier.priority = 1;
 	register_netdevice_notifier(&sc->dev_notifier);
@@ -997,7 +1040,7 @@ static int __init fast_classifier_init(void)
 	result = nf_register_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
-		goto exit6;
+		goto exit3;
 	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -1007,7 +1050,7 @@ static int __init fast_classifier_init(void)
 	result = nf_conntrack_register_notifier(&init_net, &fast_classifier_conntrack_notifier);
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf notifier hook: %d\n", result);
-		goto exit7;
+		goto exit4;
 	}
 #endif
 
@@ -1026,28 +1069,32 @@ static int __init fast_classifier_init(void)
 
 	result = genl_register_family(&fast_classifier_gnl_family);
 	if (result!= 0)
-	     goto exit8;
+		goto exit5;
 
 	result = genl_register_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
 	if (result != 0)
-		goto exit9;
+		goto exit6;
 
 	printk(KERN_ALERT "fast-classifier: registered\n");
 
 	return 0;
 
-exit9:
-	genl_unregister_family(&fast_classifier_gnl_family);
-exit8:
-
-#ifdef CONFIG_NF_CONNTRACK_EVENTS
-exit7:
-#endif
-	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
-
 exit6:
+	genl_unregister_family(&fast_classifier_gnl_family);
+
+exit5:
+#ifdef CONFIG_NF_CONNTRACK_EVENTS
+	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
+#endif
+
+exit4:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
+
+exit3:
+	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
+
+exit2:
 	kobject_put(sc->sys_fast_classifier);
 
 exit1:

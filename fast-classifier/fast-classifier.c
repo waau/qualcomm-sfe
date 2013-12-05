@@ -496,11 +496,15 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					conn->offloaded = 1;
 					spin_unlock_irqrestore(&sfe_connections_lock, flags);
 					sfe_ipv4_create_rule(p_sic);
-					return 0;
+					goto done1;
 				} else if (conn->hits > offload_at_pkts) {
 					DEBUG_ERROR("ERROR: MORE THAN %d HITS AND NOT OFFLOADED\n", offload_at_pkts);
+					spin_unlock_irqrestore(&sfe_connections_lock, flags);
+					goto done1;
 				}
-			} else if (conn->offloaded == 1) {
+			}
+
+			if (conn->offloaded == 1) {
 				struct sfe_ipv4_mark mark;
 
 				DEBUG_TRACE("CONNECTION ALREADY OFFLOADED, UPDATING MARK\n");
@@ -511,11 +515,12 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 				mark.dest_port = p_sic->dest_port;
 				mark.mark = skb->mark;
 				sfe_ipv4_mark_rule(&mark);
+				spin_unlock_irqrestore(&sfe_connections_lock, flags);
 				sfe_ipv4_create_rule(p_sic);
+				goto done1;
 			}
 
 			DEBUG_TRACE("FOUND, SKIPPING\n");
-
 			spin_unlock_irqrestore(&sfe_connections_lock, flags);
 			goto done1;
 		}

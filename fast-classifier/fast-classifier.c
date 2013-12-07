@@ -1059,6 +1059,18 @@ static int __init fast_classifier_init(void)
 	}
 #endif
 
+	result = genl_register_family(&fast_classifier_gnl_family);
+	if (result!= 0) {
+		goto exit5;
+	}
+
+	result = genl_register_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
+	if (result != 0) {
+		goto exit6;
+	}
+
+	printk(KERN_ALERT "fast-classifier: registered\n");
+
 	spin_lock_init(&sc->lock);
 
 	/*
@@ -1072,16 +1084,6 @@ static int __init fast_classifier_init(void)
 	 */
 	sfe_ipv4_register_sync_rule_callback(fast_classifier_sync_rule);
 
-	result = genl_register_family(&fast_classifier_gnl_family);
-	if (result!= 0)
-		goto exit5;
-
-	result = genl_register_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
-	if (result != 0)
-		goto exit6;
-
-	printk(KERN_ALERT "fast-classifier: registered\n");
-
 	return 0;
 
 exit6:
@@ -1089,14 +1091,15 @@ exit6:
 
 exit5:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
+	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
 #endif
 
 exit4:
-	unregister_inetaddr_notifier(&sc->inet_notifier);
-	unregister_netdevice_notifier(&sc->dev_notifier);
+	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
 
 exit3:
+	unregister_inetaddr_notifier(&sc->inet_notifier);
+	unregister_netdevice_notifier(&sc->dev_notifier);
 	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
 
 exit2:
@@ -1137,7 +1140,15 @@ static void __exit fast_classifier_exit(void)
 	 */
 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
 
-// XXX - this is where we need to unregister with any lower level offload services.
+	result = genl_unregister_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
+	if (result != 0) {
+		printk(KERN_CRIT "Unable to unreigster genl_ops\n");
+	}
+
+	result = genl_unregister_family(&fast_classifier_gnl_family);
+	if (result != 0) {
+		printk(KERN_CRIT "Unable to unreigster genl_family\n");
+	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
@@ -1149,14 +1160,6 @@ static void __exit fast_classifier_exit(void)
 	unregister_netdevice_notifier(&sc->dev_notifier);
 
 	kobject_put(sc->sys_fast_classifier);
-
-	result = genl_register_family(&fast_classifier_gnl_family);
-	if (result != 0)
-		printk(KERN_CRIT "Unable to unreigster genl_family\n");
-
-	result = genl_register_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
-	if (result != 0)
-		printk(KERN_CRIT "Unable to unreigster genl_ops\n");
 }
 
 module_init(fast_classifier_init)

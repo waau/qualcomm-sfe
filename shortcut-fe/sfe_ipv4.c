@@ -15,6 +15,23 @@
 #include "sfe_ipv4.h"
 
 /*
+ * By default Linux IP header and transport layer header structures are
+ * unpacked, assuming that such headers should be 32-bit aligned.
+ * Unfortunately some wireless adaptors can't cope with this requirement and
+ * some CPUs can't handle misaligned accesses.  For those platforms we
+ * define SFE_IPV4_UNALIGNED_IP_HEADER and mark the structures as packed.
+ * When we do this the compiler will generate slightly worse code than for the
+ * aligned case (on most platforms) but will be much quicker than fixing
+ * things up in an unaligned trap handler.
+ */
+#define SFE_IPV4_UNALIGNED_IP_HEADER 1
+#if SFE_IPV4_UNALIGNED_IP_HEADER
+#define SFE_IPV4_UNALIGNED_STRUCT __attribute__((packed))
+#else
+#define SFE_IPV4_UNALIGNED_STRUCT
+#endif
+
+/*
  * The default Linux ethhdr structure is "packed".  It also has byte aligned
  * MAC addresses and this leads to poor performance.  This version is not
  * packed and has better alignment for the MAC addresses.
@@ -26,8 +43,9 @@ struct sfe_ipv4_ethhdr {
 };
 
 /*
- * The default Linux iphdr structure is "packed".  This really hurts performance
- * on many CPUs.  Here's an aligned and "unpacked" version of the same thing.
+ * Based on the Linux IPv4 header, but with an optional "packed" attribute to
+ * help with performance on some platforms (see the definition of
+ * SFE_IPV4_UNALIGNED_STRUCT)
  */
 struct sfe_ipv4_iphdr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
@@ -52,22 +70,24 @@ struct sfe_ipv4_iphdr {
 	/*
 	 * The options start here.
 	 */
-};
+} SFE_IPV4_UNALIGNED_STRUCT;
 
 /*
- * The default Linux udphdr structure is "packed".  This really hurts performance
- * on many CPUs.  Here's an aligned and "unpacked" version of the same thing.
+ * Based on the Linux UDP header, but with an optional "packed" attribute to
+ * help with performance on some platforms (see the definition of
+ * SFE_IPV4_UNALIGNED_STRUCT)
  */
 struct sfe_ipv4_udphdr {
 	__be16 source;
 	__be16 dest;
 	__be16 len;
 	__sum16 check;
-};
+} SFE_IPV4_UNALIGNED_STRUCT;
 
 /*
- * The default Linux tcphdr structure is "packed".  This really hurts performance
- * on many CPUs.  Here's an aligned and "unpacked" version of the same thing.
+ * Based on the Linux TCP header, but with an optional "packed" attribute to
+ * help with performance on some platforms (see the definition of
+ * SFE_IPV4_UNALIGNED_STRUCT)
  */
 struct sfe_ipv4_tcphdr {
 	__be16 source;
@@ -102,7 +122,7 @@ struct sfe_ipv4_tcphdr {
 	__be16 window;
 	__sum16	check;
 	__be16 urg_ptr;
-};
+} SFE_IPV4_UNALIGNED_STRUCT;
 
 /*
  * Specifies the lower bound on ACK numbers carried in the TCP header

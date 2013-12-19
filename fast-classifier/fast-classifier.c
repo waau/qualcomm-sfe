@@ -907,10 +907,10 @@ static void fast_classifier_sync_rule(struct sfe_ipv4_sync *sis)
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
 		spin_lock_bh(&ct->lock);
-		atomic64_add(sis->src_packet_count, &acct[IP_CT_DIR_ORIGINAL].packets);
-		atomic64_add(sis->src_byte_count, &acct[IP_CT_DIR_ORIGINAL].bytes);
-		atomic64_add(sis->dest_packet_count, &acct[IP_CT_DIR_REPLY].packets);
-		atomic64_add(sis->dest_byte_count, &acct[IP_CT_DIR_REPLY].bytes);
+		atomic64_set(&acct[IP_CT_DIR_ORIGINAL].packets, sis->src_packet_count);
+		atomic64_set(&acct[IP_CT_DIR_ORIGINAL].bytes, sis->src_byte_count);
+		atomic64_set(&acct[IP_CT_DIR_REPLY].packets, sis->dest_packet_count);
+		atomic64_set(&acct[IP_CT_DIR_REPLY].bytes, sis->dest_byte_count);
 		spin_unlock_bh(&ct->lock);
 	}
 

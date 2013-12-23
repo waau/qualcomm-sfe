@@ -1293,6 +1293,12 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		eth->h_source[2] = htons(cm->xmit_src_mac[2]);
 	}
 
+	/* Mark outgoing packet */
+	skb->mark = cm->connection->mark;
+	if (skb->mark) {
+		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
+	}
+
 	si->packets_forwarded++;
 	spin_unlock(&si->lock);
 

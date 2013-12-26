@@ -2716,6 +2716,7 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	uint64_t dest_rx_packets;
 	uint64_t dest_rx_bytes;
 	uint64_t last_sync_jiffies;
+	uint32_t mark;
 
 	spin_lock_bh(&si->lock);
 	c = ws->iter_conn;
@@ -2800,6 +2801,7 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	dest_rx_packets = reply_cm->rx_packet_count64;
 	dest_rx_bytes = reply_cm->rx_byte_count64;
 	last_sync_jiffies = get_jiffies_64() - c->last_sync_jiffies;
+	mark = c->mark;
 	spin_unlock_bh(&si->lock);
 
 	bytes_read = snprintf(msg, CHAR_DEV_MSG_SIZE, "\t\t<connection "
@@ -2812,7 +2814,8 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				"dest_ip=\"%pI4\" dest_ip_xlate=\"%pI4\" "
 				"dest_port=\"%u\" dest_port_xlate=\"%u\" "
 				"dest_rx_pkts=\"%llu\" dest_rx_bytes=\"%llu\" "
-				"last_sync=\"%llu\" />\n",
+				"last_sync=\"%llu\" "
+				"mark=\"%u\" />\n",
 				protocol,
 				src_dev->name,
 				&src_ip, &src_ip_xlate,
@@ -2822,7 +2825,7 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				&dest_ip, &dest_ip_xlate,
 				ntohs(dest_port), ntohs(dest_port_xlate),
 				dest_rx_packets, dest_rx_bytes,
-				last_sync_jiffies);
+				last_sync_jiffies, mark);
 
 	if (copy_to_user(buffer + *total_read, msg, CHAR_DEV_MSG_SIZE)) {
 		return false;

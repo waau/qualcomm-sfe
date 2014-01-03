@@ -48,19 +48,16 @@ struct fast_classifier {
 struct fast_classifier __sc;
 
 static struct nla_policy fast_classifier_genl_policy[FAST_CLASSIFIER_A_MAX + 1] = {
-	[FAST_CLASSIFIER_A_MSG] = { .type = NLA_NUL_STRING },
+	[FAST_CLASSIFIER_A_TUPLE] = { .type = NLA_UNSPEC },
 };
 
 static struct genl_family fast_classifier_gnl_family = {
 	.id = GENL_ID_GENERATE,
-	.hdrsize = 0,
-	.name = "FAST_CLASSIFIER",
-	.version = 1,
+	.hdrsize = FAST_CLASSIFIER_GENL_HDRSIZE,
+	.name = FAST_CLASSIFIER_GENL_NAME,
+	.version = FAST_CLASSIFIER_GENL_VERSION,
 	.maxattr = FAST_CLASSIFIER_A_MAX,
 };
-
-
-#define FAST_CLASSIFIER_C_MAX (__FAST_CLASSIFIER_C_MAX - 1)
 
 static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *info);
 
@@ -277,7 +274,7 @@ static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct
 static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *na;
-	struct fast_classifier_msg *fc_msg;
+	struct fast_classifier_tuple *fc_msg;
 	struct sfe_ipv4_create *p_sic;
 	struct sfe_connection *conn;
 	unsigned long flags;

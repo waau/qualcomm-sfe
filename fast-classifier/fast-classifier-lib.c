@@ -15,7 +15,7 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 	int ret;
 	char src_str[INET_ADDRSTRLEN];
 	char dst_str[INET_ADDRSTRLEN];
-	struct fast_classifier_msg fc_msg;
+	struct fast_classifier_tuple fc_msg;
 
 #ifdef DEBUG
 	printf("DEBUG: would offload: %d, %s, %s, %d, %d\n", proto,
@@ -38,7 +38,7 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 
 	genl_connect(sock);
 
-	family = genl_ctrl_resolve(sock, "FAST_CLASSIFIER");
+	family = genl_ctrl_resolve(sock, FAST_CLASSIFIER_GENL_NAME);
 	if (family < 0) {
 		nl_socket_free(sock);
 		printf("Unable to resolve family\n");
@@ -52,8 +52,9 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 		return;
 	}
 
-        genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, family, 0,
-                    NLM_F_REQUEST, 1, 1);
+        genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, family,
+			FAST_CLASSIFIER_GENL_HDRSIZE, NLM_F_REQUEST,
+			FAST_CLASSIFIER_C_RECV, FAST_CLASSIFIER_GENL_VERSION);
         nla_put(msg, 1, sizeof(fc_msg), &fc_msg);
 
         ret = nl_send_auto_complete(sock, msg);

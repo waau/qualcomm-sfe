@@ -48,7 +48,13 @@ struct fast_classifier {
 struct fast_classifier __sc;
 
 static struct nla_policy fast_classifier_genl_policy[FAST_CLASSIFIER_A_MAX + 1] = {
-	[FAST_CLASSIFIER_A_TUPLE] = { .type = NLA_UNSPEC },
+	[FAST_CLASSIFIER_A_TUPLE] = { .type = NLA_UNSPEC,
+				      .len = sizeof(struct fast_classifier_tuple)
+				    },
+};
+
+static struct genl_multicast_group fast_classifier_genl_mcgrp = {
+	.name = FAST_CLASSIFIER_GENL_MCGRP,
 };
 
 static struct genl_family fast_classifier_gnl_family = {
@@ -59,14 +65,30 @@ static struct genl_family fast_classifier_gnl_family = {
 	.maxattr = FAST_CLASSIFIER_A_MAX,
 };
 
-static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *info);
+static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info);
 
-static struct genl_ops fast_classifier_gnl_ops_recv = {
-	.cmd = FAST_CLASSIFIER_C_RECV,
-	.flags = 0,
-	.policy = fast_classifier_genl_policy,
-	.doit = fast_classifier_recv_genl_msg,
-	.dumpit = NULL,
+static struct genl_ops fast_classifier_gnl_ops[] = {
+	{
+		.cmd = FAST_CLASSIFIER_C_OFFLOAD,
+		.flags = 0,
+		.policy = fast_classifier_genl_policy,
+		.doit = fast_classifier_offload_genl_msg,
+		.dumpit = NULL,
+	},
+	{
+		.cmd = FAST_CLASSIFIER_C_OFFLOADED,
+		.flags = 0,
+		.policy = fast_classifier_genl_policy,
+		.doit = NULL,
+		.dumpit = NULL,
+	},
+	{
+		.cmd = FAST_CLASSIFIER_C_DONE,
+		.flags = 0,
+		.policy = fast_classifier_genl_policy,
+		.doit = NULL,
+		.dumpit = NULL,
+	},
 };
 
 /*
@@ -267,11 +289,50 @@ static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct
 	return 1;
 }
 
+/* fast_classifier_send_genl_msg()
+ * 	Function to send a generic netlink message
+ */
+static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple *fc_msg) {
+	struct sk_buff *skb;
+	int rc;
+	void *msg_head;
+
+	skb = nlmsg_new(NLMSG_GOODSIZE, GFP_ATOMIC);
+	if (skb == NULL)
+		return;
+
+	msg_head = genlmsg_put(skb, 0, 0, &fast_classifier_gnl_family, 0, msg);
+	if (msg_head == NULL) {
+		nlmsg_free(skb);
+		return;
+	}
+
+	rc = nla_put(skb, FAST_CLASSIFIER_A_TUPLE, sizeof(struct fast_classifier_tuple), fc_msg);
+	if (rc != 0) {
+		genlmsg_cancel(skb, msg_head);
+		nlmsg_free(skb);
+		return;
+	}
+
+	rc = genlmsg_end(skb, msg_head);
+	if (rc < 0) {
+		genlmsg_cancel(skb, msg_head);
+		nlmsg_free(skb);
+		return;
+	}
+	genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp.id, GFP_ATOMIC);
+
+	DEBUG_TRACE("INFO: %d : %d, %d, %d, %d, %d\n", msg, fc_msg->proto,
+				fc_msg->src_saddr,
+				fc_msg->dst_saddr,
+				fc_msg->sport, fc_msg->dport);
+}
+
 /*
- * fast_classifier_recv_genl_msg()
+ * fast_classifier_offload_genl_msg()
  * 	Called from user space to offload a connection
  */
-static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *info)
+static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 {
 	struct nlattr *na;
 	struct fast_classifier_tuple *fc_msg;
@@ -279,13 +340,14 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 	struct sfe_connection *conn;
 	unsigned long flags;
 
-	na = info->attrs[FAST_CLASSIFIER_C_RECV];
+	na = info->attrs[FAST_CLASSIFIER_C_OFFLOAD];
 	fc_msg = nla_data(na);
 
 	DEBUG_TRACE("INFO: want to offload: %d, %d, %d, %d, %d\n", fc_msg->proto,
 				fc_msg->src_saddr,
 				fc_msg->dst_saddr,
 				fc_msg->sport, fc_msg->dport);
+
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 	list_for_each_entry(conn, &sfe_connections, list) {
 		p_sic = conn->sic;
@@ -310,10 +372,13 @@ static int fast_classifier_recv_genl_msg(struct sk_buff *skb, struct genl_info *
 				conn->offloaded = 1;
 				spin_unlock_irqrestore(&sfe_connections_lock, flags);
 				sfe_ipv4_create_rule(p_sic);
+				fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, fc_msg);
 				return 0;
 			}
-
+			/* conn->offloaded != 0 */
 			DEBUG_TRACE("GOT REQUEST TO OFFLOAD ALREADY OFFLOADED CONN FROM USERSPACE\n");
+			spin_unlock_irqrestore(&sfe_connections_lock, flags);
+			return 0;
 		}
 		DEBUG_TRACE("SEARCH CONTINUES\n");
 	}
@@ -492,6 +557,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			conn->hits++;
 			if (conn->offloaded == 0) {
 				if (conn->hits == offload_at_pkts) {
+				struct fast_classifier_tuple fc_msg;
 					DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
 					if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
 						spin_unlock_irqrestore(&sfe_connections_lock, flags);
@@ -503,6 +569,13 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					conn->offloaded = 1;
 					spin_unlock_irqrestore(&sfe_connections_lock, flags);
 					sfe_ipv4_create_rule(p_sic);
+
+					fc_msg.proto = sic.protocol;
+					fc_msg.src_saddr = sic.src_ip;
+					fc_msg.dst_saddr = sic.dest_ip;
+					fc_msg.sport = sic.src_port;
+					fc_msg.dport = sic.dest_port;
+					fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, &fc_msg);
 					goto done1;
 				} else if (conn->hits > offload_at_pkts) {
 					DEBUG_ERROR("ERROR: MORE THAN %d HITS AND NOT OFFLOADED\n", offload_at_pkts);
@@ -717,6 +790,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	int sfe_found_match = 0;
 	int sfe_connections_size = 0;
 	unsigned long flags;
+	struct fast_classifier_tuple fc_msg;
 
 	if (events & IPCT_MARK) {
 		struct sfe_ipv4_mark mark;
@@ -818,12 +892,16 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 		    p_sic->dest_port == sid.dest_port &&
 		    p_sic->src_ip == sid.src_ip &&
 		    p_sic->dest_ip == sid.dest_ip ) {
+			fc_msg.proto = p_sic->protocol;
+			fc_msg.src_saddr = p_sic->src_ip;
+			fc_msg.dst_saddr = p_sic->dest_ip;
+			fc_msg.sport = p_sic->src_port;
+			fc_msg.dport = p_sic->dest_port;
 			sfe_found_match = 1;
 			DEBUG_TRACE("FOUND, DELETING\n");
 			break;
-		} else {
-			DEBUG_TRACE("SEARCH CONTINUES\n");
 		}
+		DEBUG_TRACE("SEARCH CONTINUES\n");
 		sfe_connections_size++;
 	}
 
@@ -840,6 +918,11 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
 
 	sfe_ipv4_destroy_rule(&sid);
+
+	if (sfe_found_match) {
+		fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_DONE, &fc_msg);
+	}
+
 	return NOTIFY_DONE;
 }
 
@@ -1078,12 +1161,21 @@ static int __init fast_classifier_init(void)
 #endif
 
 	result = genl_register_family(&fast_classifier_gnl_family);
-	if (result!= 0) {
+	if (result != 0) {
+		printk(KERN_CRIT "unable to register genl family\n");
 		goto exit5;
 	}
 
-	result = genl_register_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
+	result = genl_register_ops(&fast_classifier_gnl_family, fast_classifier_gnl_ops);
 	if (result != 0) {
+		printk(KERN_CRIT "unable to register ops\n");
+		goto exit6;
+	}
+
+	result = genl_register_mc_group(&fast_classifier_gnl_family,
+					&fast_classifier_genl_mcgrp);
+	if (result != 0) {
+		printk(KERN_CRIT "unable to register multicast group\n");
 		goto exit6;
 	}
 
@@ -1158,7 +1250,7 @@ static void __exit fast_classifier_exit(void)
 	 */
 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
 
-	result = genl_unregister_ops(&fast_classifier_gnl_family, &fast_classifier_gnl_ops_recv);
+	result = genl_unregister_ops(&fast_classifier_gnl_family, fast_classifier_gnl_ops);
 	if (result != 0) {
 		printk(KERN_CRIT "Unable to unreigster genl_ops\n");
 	}

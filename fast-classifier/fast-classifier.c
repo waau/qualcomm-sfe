@@ -23,7 +23,7 @@
 
 #include "../shortcut-fe/sfe.h"
 #include "../shortcut-fe/sfe_ipv4.h"
-#include "fast-classifier-priv.h"
+#include "fast-classifier.h"
 
 /*
  * Per-module structure.

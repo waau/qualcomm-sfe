@@ -14,6 +14,7 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
+#include <linux/if_pppox.h>
 
 #include "sfe.h"
 #include "sfe_ipv4.h"
@@ -72,6 +73,13 @@ int sfe_cm_recv(struct sk_buff *skb)
 
 	dev = skb->dev;
 
+	/*
+	 * And PPPoE packets
+	 */
+	if (htons(ETH_P_PPP_SES) == skb->protocol) {
+		return sfe_pppoe_recv(dev, skb);
+	}
+
 #if (SFE_HOOK_ABOVE_BRIDGE)
 	/*
 	 * Does our input device support IP processing?
@@ -99,7 +107,7 @@ int sfe_cm_recv(struct sk_buff *skb)
 		return sfe_ipv4_recv(dev, skb);
 	}
 
-	DEBUG_TRACE("not IP packet\n");
+	DEBUG_TRACE("not IP packet or PPPoE packet\n");
 	return 0;
 }
 
@@ -428,6 +436,17 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 // XXX - these MTUs need handling correctly!
 	sic.src_mtu = 1500;
 	sic.dest_mtu = 1500;
+
+	if (last_pppox_sock->pppoe_dev == in->name) {
+		struct sock *sk = &last_pppox_sock->sk;
+
+		if (sk->sk_family == PF_PPPOX && sk->sk_protocol == PX_PROTO_OE) {
+			sic.dest_pppoe_sk = sk;
+		}
+	} else {
+		sic.dest_pppoe_sk = NULL;
+	}
+	sic.src_pppoe_sk = NULL;
 
 	sfe_ipv4_create_rule(&sic);
 

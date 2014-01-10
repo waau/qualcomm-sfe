@@ -2,6 +2,8 @@
  * User space header to send message to the fast classifier
  */
 
+#include <linux/if_ether.h>
+
 #define FAST_CLASSIFIER_GENL_VERSION	(1)
 #define FAST_CLASSIFIER_GENL_NAME	"FC"
 #define FAST_CLASSIFIER_GENL_MCGRP	"FC_MCGRP"
@@ -29,4 +31,5 @@ struct fast_classifier_tuple {
 	unsigned long dst_saddr;
 	unsigned short sport;
 	unsigned short dport;
+	unsigned char mac[ETH_ALEN];
 };

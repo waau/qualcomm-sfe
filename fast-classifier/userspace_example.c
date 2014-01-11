@@ -35,11 +35,11 @@ static int parse_cb(struct nl_msg *msg, void *arg) {
 	switch (gnlh->cmd) {
 	case FAST_CLASSIFIER_C_OFFLOADED:
 		printf("Got a offloaded message\n");
-		dump_fc_tuple(nla_data(attrs));
+		dump_fc_tuple(nla_data(attrs[FAST_CLASSIFIER_A_TUPLE]));
 		return NL_OK;
 	case FAST_CLASSIFIER_C_DONE:
 		printf("Got a done message\n");
-		dump_fc_tuple(nla_data(attrs));
+		dump_fc_tuple(nla_data(attrs[FAST_CLASSIFIER_A_TUPLE]));
 		return NL_OK;
 	}
 

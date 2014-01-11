@@ -340,7 +340,7 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 	struct sfe_connection *conn;
 	unsigned long flags;
 
-	na = info->attrs[FAST_CLASSIFIER_C_OFFLOAD];
+	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
 
 	DEBUG_TRACE("INFO: want to offload: %d, %d, %d, %d, %d\n", fc_msg->proto,

@@ -558,10 +558,14 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		    p_sic->dest_port == sic.dest_port &&
 		    p_sic->src_ip == sic.src_ip &&
 		    p_sic->dest_ip == sic.dest_ip ) {
-			if (skb->mark) {
+			/* is this really necessary?  shouldn't the conntrack
+			   callback be sufficient for tracking the conmark?
+			   regardless, don't overwrite the sic mark if the
+			   skb's mark is zero */
+			if (skb->mark != 0) {
 				DEBUG_TRACE("UPDATING MARK %x\n", skb->mark);
+				p_sic->mark = skb->mark;
 			}
-			p_sic->mark = skb->mark;
 
 
 			conn->hits++;
@@ -795,29 +799,6 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	unsigned long flags;
 	struct fast_classifier_tuple fc_msg;
 
-	if (events & IPCT_MARK) {
-		struct sfe_ipv4_mark mark;
-		orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-
-		mark.protocol = (int32_t)orig_tuple.dst.protonum;
-		mark.src_ip = (__be32)orig_tuple.src.u3.ip;
-		mark.dest_ip = (__be32)orig_tuple.dst.u3.ip;
-		switch (mark.protocol) {
-		case IPPROTO_TCP:
-			mark.src_port = orig_tuple.src.u.tcp.port;
-			mark.dest_port = orig_tuple.dst.u.tcp.port;
-			break;
-		case IPPROTO_UDP:
-			mark.src_port = orig_tuple.src.u.udp.port;
-			mark.dest_port = orig_tuple.dst.u.udp.port;
-			break;
-		default:
-			break;
-		}
-
-		sfe_ipv4_mark_rule(&mark);
-	}
-
 	/*
 	 * If we don't have a conntrack entry then we're done.
 	 */
@@ -840,6 +821,33 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	if (unlikely(nf_ct_l3num(ct) != AF_INET)) {
 		DEBUG_TRACE("ignoring non-IPv4 conn\n");
 		return NOTIFY_DONE;
+	}
+
+	/*
+	 * Check for an updated mark
+	 */
+	if ((events & (1 << IPCT_MARK)) && (ct->mark != 0)) {
+		struct sfe_ipv4_mark mark;
+		orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
+
+		mark.protocol = (int32_t)orig_tuple.dst.protonum;
+		mark.src_ip = (__be32)orig_tuple.src.u3.ip;
+		mark.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+		switch (mark.protocol) {
+		case IPPROTO_TCP:
+			mark.src_port = orig_tuple.src.u.tcp.port;
+			mark.dest_port = orig_tuple.dst.u.tcp.port;
+			break;
+		case IPPROTO_UDP:
+			mark.src_port = orig_tuple.src.u.udp.port;
+			mark.dest_port = orig_tuple.dst.u.udp.port;
+			break;
+		default:
+			break;
+		}
+
+		mark.mark = ct->mark;
+		sfe_ipv4_mark_rule(&mark);
 	}
 
 	/*

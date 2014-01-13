@@ -828,7 +828,10 @@ static void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark)
 			mark->src_ip, mark->src_port,
 			mark->dest_ip, mark->dest_port);
 	if (c) {
-		DEBUG_TRACE("INFO: Matching connection found for mark, setting to: %x\n", mark);
+		DEBUG_TRACE("Matching connection found for mark, "
+			    "setting from %08x to %08x\n",
+			    c->mark, mark->mark);
+		WARN_ON((0 != c->mark) && (0 == mark->mark));
 		c->mark = mark->mark;
 	}
 	spin_unlock(&si->lock);
@@ -2391,9 +2394,10 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		sfe_ipv4_update_protocol_state(c, sic);
 		spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("connection already exists - p: %d\n"
+		DEBUG_TRACE("connection already exists - mark: %08x, p: %d\n"
 			    "  s: %s:%pM:%pI4:%u, d: %s:%pM:%pI4:%u\n",
-			    sic->protocol, sic->src_dev->name, sic->src_mac, &sic->src_ip, ntohs(sic->src_port),
+			    sic->mark, sic->protocol,
+			    sic->src_dev->name, sic->src_mac, &sic->src_ip, ntohs(sic->src_port),
 			    sic->dest_dev->name, sic->dest_mac, &sic->dest_ip, ntohs(sic->dest_port));
 		return -EADDRINUSE;
 	}
@@ -2564,10 +2568,10 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	/*
 	 * We have everything we need!
 	 */
-	DEBUG_INFO("new connection - p: %d\n"
+	DEBUG_INFO("new connection - mark: %08x, p: %d\n"
 		   "  s: %s:%pM(%pM):%pI4(%pI4):%u(%u)\n"
 		   "  d: %s:%pM(%pM):%pI4(%pI4):%u(%u)\n",
-		   sic->protocol,
+		   sic->mark, sic->protocol,
 		   sic->src_dev->name, sic->src_mac, sic->src_mac_xlate,
 		   &sic->src_ip, &sic->src_ip_xlate, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
 		   sic->dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,

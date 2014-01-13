@@ -558,16 +558,6 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		    p_sic->dest_port == sic.dest_port &&
 		    p_sic->src_ip == sic.src_ip &&
 		    p_sic->dest_ip == sic.dest_ip ) {
-			/* is this really necessary?  shouldn't the conntrack
-			   callback be sufficient for tracking the conmark?
-			   regardless, don't overwrite the sic mark if the
-			   skb's mark is zero */
-			if (skb->mark != 0) {
-				DEBUG_TRACE("UPDATING MARK %x\n", skb->mark);
-				p_sic->mark = skb->mark;
-			}
-
-
 			conn->hits++;
 			if (conn->offloaded == 0) {
 				if (conn->hits == offload_at_pkts) {

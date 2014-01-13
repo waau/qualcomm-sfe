@@ -89,7 +89,7 @@ typedef void (*sfe_ipv4_sync_rule_callback_t)(struct sfe_ipv4_sync *);
 
 extern int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb);
 extern int sfe_pppoe_recv(struct net_device *dev, struct sk_buff *skb);
-extern void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic);
+extern int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic);
 extern void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid);
 extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
 extern void sfe_ipv4_register_sync_rule_callback(sfe_ipv4_sync_rule_callback_t callback);

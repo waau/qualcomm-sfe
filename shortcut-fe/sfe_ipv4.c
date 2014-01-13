@@ -2360,7 +2360,7 @@ void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic)
  * sfe_ipv4_create_rule()
  *	Create a forwarding rule.
  */
-void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
+int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 {
 	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
@@ -2395,7 +2395,7 @@ void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 			    "  s: %s:%pM:%pI4:%u, d: %s:%pM:%pI4:%u\n",
 			    sic->protocol, sic->src_dev->name, sic->src_mac, &sic->src_ip, ntohs(sic->src_port),
 			    sic->dest_dev->name, sic->dest_mac, &sic->dest_ip, ntohs(sic->dest_port));
-		return;
+		return -EADDRINUSE;
 	}
 
 	/*
@@ -2404,14 +2404,14 @@ void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	c = (struct sfe_ipv4_connection *)kmalloc(sizeof(struct sfe_ipv4_connection), GFP_ATOMIC);
 	if (unlikely(!c)) {
 		spin_unlock_bh(&si->lock);
-		return;
+		return -ENOMEM;
 	}
 
 	original_cm = (struct sfe_ipv4_connection_match *)kmalloc(sizeof(struct sfe_ipv4_connection_match), GFP_ATOMIC);
 	if (unlikely(!original_cm)) {
 		spin_unlock_bh(&si->lock);
 		kfree(c);
-		return;
+		return -ENOMEM;
 	}
 
 	reply_cm = (struct sfe_ipv4_connection_match *)kmalloc(sizeof(struct sfe_ipv4_connection_match), GFP_ATOMIC);
@@ -2419,7 +2419,7 @@ void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		spin_unlock_bh(&si->lock);
 		kfree(original_cm);
 		kfree(c);
-		return;
+		return -ENOMEM;
 	}
 
 	/*
@@ -2572,6 +2572,8 @@ void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		   &sic->src_ip, &sic->src_ip_xlate, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
 		   sic->dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,
 		   &sic->dest_ip, &sic->dest_ip_xlate, ntohs(sic->dest_port), ntohs(sic->dest_port_xlate));
+
+	return 0;
 }
 
 /*

@@ -3021,7 +3021,7 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				"dest_port=\"%u\" dest_port_xlate=\"%u\" "
 				"dest_rx_pkts=\"%llu\" dest_rx_bytes=\"%llu\" "
 				"last_sync=\"%llu\" "
-				"mark=\"%u\" />\n",
+				"mark=\"%08x\" />\n",
 				protocol,
 				src_dev->name,
 				&src_ip, &src_ip_xlate,

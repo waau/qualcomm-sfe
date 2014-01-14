@@ -93,6 +93,7 @@ extern void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic);
 extern void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid);
 extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
 extern void sfe_ipv4_register_sync_rule_callback(sfe_ipv4_sync_rule_callback_t callback);
+extern void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic);
 
 /*
  * IPv4 connection mark structure

@@ -2280,6 +2280,82 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	return 0;
 }
 
+static void
+sfe_ipv4_update_tcp_state(struct sfe_ipv4_connection *c,
+			  struct sfe_ipv4_create *sic)
+{
+	struct sfe_ipv4_connection_match *orig_cm;
+	struct sfe_ipv4_connection_match *repl_cm;
+	struct sfe_ipv4_tcp_connection_match *orig_tcp;
+	struct sfe_ipv4_tcp_connection_match *repl_tcp;
+
+	orig_cm = c->original_match;
+	repl_cm = c->reply_match;
+	orig_tcp = &orig_cm->protocol_state.tcp;
+	repl_tcp = &repl_cm->protocol_state.tcp;
+
+	/* update orig */
+	if (orig_tcp->max_win < sic->src_td_max_window) {
+		orig_tcp->max_win = sic->src_td_max_window;
+	}
+	if ((int32_t)(orig_tcp->end - sic->src_td_end) < 0) {
+		orig_tcp->end = sic->src_td_end;
+	}
+	if ((int32_t)(orig_tcp->max_end - sic->src_td_max_end) < 0) {
+		orig_tcp->max_end = sic->src_td_max_end;
+	}
+
+	/* update reply */
+	if (repl_tcp->max_win < sic->dest_td_max_window) {
+		repl_tcp->max_win = sic->dest_td_max_window;
+	}
+	if ((int32_t)(repl_tcp->end - sic->dest_td_end) < 0) {
+		repl_tcp->end = sic->dest_td_end;
+	}
+	if ((int32_t)(repl_tcp->max_end - sic->dest_td_max_end) < 0) {
+		repl_tcp->max_end = sic->dest_td_max_end;
+	}
+
+	/* update match flags */
+	orig_cm->flags &= ~SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
+	repl_cm->flags &= ~SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
+	if (sic->flags & SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK) {
+		orig_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
+		repl_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
+	}
+}
+
+static void
+sfe_ipv4_update_protocol_state(struct sfe_ipv4_connection *c,
+			       struct sfe_ipv4_create *sic)
+{
+	switch (sic->protocol) {
+	case IPPROTO_TCP:
+		sfe_ipv4_update_tcp_state(c, sic);
+		break;
+	}
+}
+
+void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic)
+{
+	struct sfe_ipv4_connection *c;
+	struct sfe_ipv4 *si = &__si;
+
+	spin_lock_bh(&si->lock);
+
+	c = sfe_ipv4_find_sfe_ipv4_connection(si,
+					      sic->protocol,
+					      sic->src_ip,
+					      sic->src_port,
+					      sic->dest_ip,
+					      sic->dest_port);
+	if (c != NULL) {
+		sfe_ipv4_update_protocol_state(c, sic);
+	}
+
+	spin_unlock_bh(&si->lock);
+}
+
 /*
  * sfe_ipv4_create_rule()
  *	Create a forwarding rule.
@@ -2295,51 +2371,24 @@ void sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	si->connection_create_requests++;
 
 	/*
-	 * Check to see if there is already a flow that matches the rule we're trying
-	 * to create.  If there is then we can't create a new one.
+	 * Check to see if there is already a flow that matches the rule we're
+	 * trying to create.  If there is then we can't create a new one.
 	 */
-	c = sfe_ipv4_find_sfe_ipv4_connection(si, sic->protocol, sic->src_ip, sic->src_port,
-					      sic->dest_ip, sic->dest_port);
-	if (c) {
+	c = sfe_ipv4_find_sfe_ipv4_connection(si,
+					      sic->protocol,
+					      sic->src_ip,
+					      sic->src_port,
+					      sic->dest_ip,
+					      sic->dest_port);
+	if (c != NULL) {
 		si->connection_create_collisions++;
 
 		/*
-		 * If we already have the flow then it's likely that this request to
-		 * create the connection rule contains more up-to-date information.
-		 * Check and update accordingly.
+		 * If we already have the flow then it's likely that this
+		 * request to create the connection rule contains more
+		 * up-to-date information. Check and update accordingly.
 		 */
-		original_cm = c->original_match;
-		reply_cm = c->reply_match;
-
-		switch (sic->protocol) {
-		case IPPROTO_TCP:
-			if (original_cm->protocol_state.tcp.max_win < sic->src_td_max_window) {
-				original_cm->protocol_state.tcp.max_win = sic->src_td_max_window;
-			}
-			if ((int32_t)(original_cm->protocol_state.tcp.end - sic->src_td_end) < 0) {
-				original_cm->protocol_state.tcp.end = sic->src_td_end;
-			}
-			if ((int32_t)(original_cm->protocol_state.tcp.max_end - sic->src_td_max_end) < 0) {
-				original_cm->protocol_state.tcp.max_end = sic->src_td_max_end;
-			}
-			if (reply_cm->protocol_state.tcp.max_win < sic->dest_td_max_window) {
-				reply_cm->protocol_state.tcp.max_win = sic->dest_td_max_window;
-			}
-			if ((int32_t)(reply_cm->protocol_state.tcp.end - sic->dest_td_end) < 0) {
-				reply_cm->protocol_state.tcp.end = sic->dest_td_end;
-			}
-			if ((int32_t)(reply_cm->protocol_state.tcp.max_end - sic->dest_td_max_end) < 0) {
-				reply_cm->protocol_state.tcp.max_end = sic->dest_td_max_end;
-			}
-			original_cm->flags &= ~SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
-			reply_cm->flags &= ~SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
-			if (sic->flags & SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK) {
-				original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
-				reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
-			}
-			break;
-		}
-
+		sfe_ipv4_update_protocol_state(c, sic);
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("connection already exists - p: %d\n"
@@ -3401,6 +3450,7 @@ EXPORT_SYMBOL(sfe_ipv4_destroy_rule);
 EXPORT_SYMBOL(sfe_ipv4_destroy_all_rules_for_dev);
 EXPORT_SYMBOL(sfe_ipv4_register_sync_rule_callback);
 EXPORT_SYMBOL(sfe_ipv4_mark_rule);
+EXPORT_SYMBOL(sfe_ipv4_update_rule);
 
 MODULE_AUTHOR("Qualcomm Atheros Inc.");
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - IPv4 edition");

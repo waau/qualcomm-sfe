@@ -152,7 +152,7 @@ int fast_classifier_recv(struct sk_buff *skb)
 
 	/*
 	 * We're only interested in IP packets.
-	 */	
+	 */
 	if (likely(htons(ETH_P_IP) == skb->protocol)) {
 		return sfe_ipv4_recv(dev, skb);
 	}
@@ -195,7 +195,7 @@ static bool fast_classifier_find_mac_addr(uint32_t addr, uint8_t *mac_addr)
 	if (unlikely(!neigh)) {
 		rcu_read_unlock();
 		dst_release(dst);
-		return false; 
+		return false;
 	}
 
 	if (unlikely(!(neigh->nud_state & NUD_VALID))) {

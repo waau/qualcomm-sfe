@@ -67,7 +67,7 @@ struct sfe_ipv4_sync {
 	int protocol;			/* IP protocol number (IPPROTO_...) */
 	__be32 src_ip;			/* Non-NAT source address, i.e. the creator of the connection */
 	__be16 src_port;		/* Non-NAT source port */
-	__be32 dest_ip;			/* Non-NAT destination address, i.e. to whom the connection was created */ 
+	__be32 dest_ip;			/* Non-NAT destination address, i.e. to whom the connection was created */
 	__be16 dest_port;		/* Non-NAT destination port */
 	uint32_t src_td_max_window;
 	uint32_t src_td_end;

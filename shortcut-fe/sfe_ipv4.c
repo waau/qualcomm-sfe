@@ -120,7 +120,7 @@ struct sfe_ipv4_tcphdr {
 	      fin:1;
 #else
 #error	"Adjust your <asm/byteorder.h> defines"
-#endif	
+#endif
 	__be16 window;
 	__sum16	check;
 	__be16 urg_ptr;
@@ -619,7 +619,7 @@ static void sfe_ipv4_connection_match_compute_translations(struct sfe_ipv4_conne
 		adj = (adj & 0xffff) + (adj >> 16);
 		adj = (adj & 0xffff) + (adj >> 16);
 		cm->xlate_src_csum_adjustment = (uint16_t)adj;
-		
+
 	}
 
 	if (cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST) {
@@ -2005,7 +2005,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 		return 0;
 	}
 
-	len -= icmp_ihl; 
+	len -= icmp_ihl;
 	icmp_trans_h = ((uint32_t *)icmp_iph) + icmp_ihl_words;
 
 	/*
@@ -2221,7 +2221,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 
 	/*
 	 * Do we have a non-initial fragment?
-	 */	
+	 */
 	frag_off = ntohs(iph->frag_off);
 	if (unlikely(frag_off & IP_OFFSET)) {
 		spin_lock(&si->lock);
@@ -2670,6 +2670,7 @@ void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev)
 			if (c->reply_match->pppoe_sk) {
 				sock_put(c->reply_match->pppoe_sk);
 			}
+
 			/*
 			 * This entry is dead so release our hold of the source and
 			 * dest devices and free the memory for our connection objects.

@@ -3272,11 +3272,28 @@ static ssize_t sfe_ipv4_debug_dev_read(struct file *filp, char *buffer, size_t l
 
 /*
  * sfe_ipv4_debug_dev_write()
- *	Write to char device not required/supported
+ *	Write to char device resets some stats 
  */
 static ssize_t sfe_ipv4_debug_dev_write(struct file *filp, const char *buffer, size_t length, loff_t *offset)
 {
-	return -EINVAL;
+	struct sfe_ipv4 *si = &__si;
+
+	spin_lock_bh(&si->lock);
+	sfe_ipv4_update_summary_stats(si);
+
+	si->num_connections = 0;
+	si->packets_forwarded64 = 0;
+	si->packets_not_forwarded64 = 0;
+	si->connection_create_requests64 = 0;
+	si->connection_create_collisions64 = 0;
+	si->connection_destroy_requests64 = 0;
+	si->connection_destroy_misses64 = 0;
+	si->connection_flushes64 = 0;
+	si->connection_match_hash_hits64 = 0;
+	si->connection_match_hash_reorders64 = 0;
+	spin_unlock_bh(&si->lock);
+
+	return length;
 }
 
 /*

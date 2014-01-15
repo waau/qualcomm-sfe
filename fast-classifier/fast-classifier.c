@@ -1092,9 +1092,12 @@ static ssize_t fast_classifier_set_offload_at_pkts(struct device *dev,
 					struct device_attribute *attr,
 					char *buf, size_t size)
 {
-	int new;
+	long new;
+	int ret;
 
-	if (strict_strtol(buf, 0, &new) < 1)
+	printk(KERN_EMERG "BUF: %s\n", buf);
+	ret = strict_strtol(buf, 0, &new);
+	if (ret == -EINVAL || ((int)new != new))
 		return -EINVAL;
 
 	offload_at_pkts = new;

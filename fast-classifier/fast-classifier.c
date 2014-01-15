@@ -767,6 +767,33 @@ done1:
 	return NF_ACCEPT;
 }
 
+/*
+ * fast_classifier_update_mark()
+ *	updates the mark for a fast-classifier connection
+ */
+static void fast_classifier_update_mark(struct sfe_ipv4_mark *mark)
+{
+	struct sfe_connection *conn;
+	struct sfe_ipv4_create *p_sic;
+	unsigned long flags;
+
+	spin_lock_irqsave(&sfe_connections_lock, flags);
+	list_for_each_entry(conn, &sfe_connections, list) {
+		p_sic = conn->sic;
+		if (p_sic->protocol == mark->protocol &&
+		    p_sic->src_port == mark->src_port &&
+		    p_sic->dest_port == mark->dest_port &&
+		    p_sic->src_ip == mark->src_ip &&
+		    p_sic->dest_ip == mark->dest_ip ) {
+
+			p_sic->mark = mark->mark;
+
+			break;
+		}
+	}
+	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+}
+
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 /*
  * fast_classifier_conntrack_event()
@@ -838,6 +865,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 
 		mark.mark = ct->mark;
 		sfe_ipv4_mark_rule(&mark);
+		fast_classifier_update_mark(&mark);
 	}
 
 	/*

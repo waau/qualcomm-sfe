@@ -108,21 +108,21 @@ int sfe_cm_recv(struct sk_buff *skb)
 }
 
 /*
- * sfe_cm_find_mac_addr()
- *	Find the MAC address for a given IPv4 address.
+ * sfe_cm_find_dev_and_mac_addr()
+ *	Find the device and MAC address for a given IPv4 address.
  *
- * Returns true if we find the MAC address, otherwise false.
+ * Returns true if we find the device and MAC address, otherwise false.
  *
  * We look up the rtable entry for the address and, from its neighbour
  * structure, obtain the hardware address.  This means this function also
  * works if the neighbours are routers too.
  */
-static bool sfe_cm_find_mac_addr(uint32_t addr, uint8_t *mac_addr)
+static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev, uint8_t *mac_addr)
 {
 	struct neighbour *neigh;
 	struct rtable *rt;
 	struct dst_entry *dst;
-	struct net_device *dev;
+	struct net_device *mac_dev;
 
 	/*
 	 * Look up the rtable entry for the IP address then get the hardware
@@ -150,14 +150,17 @@ static bool sfe_cm_find_mac_addr(uint32_t addr, uint8_t *mac_addr)
 		return false;
 	}
 
-	dev = neigh->dev;
-	if (!dev) {
+	mac_dev = neigh->dev;
+	if (!mac_dev) {
 		rcu_read_unlock();
 		dst_release(dst);
 		return false;
 	}
 
-	memcpy(mac_addr, neigh->ha, (size_t)dev->addr_len);
+	memcpy(mac_addr, neigh->ha, (size_t)mac_dev->addr_len);
+
+	dev_hold(mac_dev);
+	*dev = mac_dev;
 	rcu_read_unlock();
 
 	dst_release(dst);
@@ -168,6 +171,7 @@ static bool sfe_cm_find_mac_addr(uint32_t addr, uint8_t *mac_addr)
 	 */
 	if (is_multicast_ether_addr(mac_addr)) {
 		DEBUG_TRACE("MAC is non-unicast - ignoring\n");
+		dev_put(mac_dev);
 		return false;
 	}
 
@@ -188,6 +192,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	struct net_device *in;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
+	struct net_device *dev;
 	struct net_device *src_dev;
 	struct net_device *dest_dev;
 	struct net_device *src_br_dev = NULL;
@@ -211,24 +216,12 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	 * Don't process packets that are not being forwarded.
 	 */
 	in = dev_get_by_index(&init_net, skb->skb_iif);
-	if  (!in) {
+	if (!in) {
 		DEBUG_TRACE("packet not forwarding\n");
 		return NF_ACCEPT;
 	}
 
-	/*
-	 * Don't process packets with non-standard 802.3 MAC address sizes.
-	 */
-	if (unlikely(in->addr_len != ETH_ALEN)) {
-		DEBUG_TRACE("in device: %s not 802.3 hw addr len: %u, ignoring\n",
-				in->name, (unsigned)in->addr_len);
-		goto done1;
-	}
-	if (unlikely(out->addr_len != ETH_ALEN)) {
-		DEBUG_TRACE("out device: %s not 802.3 hw addr len: %u, ignoring\n",
-				out->name, (unsigned)out->addr_len);
-		goto done1;
-	}
+	dev_put(in);
 
 	/*
 	 * Don't process packets that aren't being tracked by conntrack.
@@ -236,7 +229,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	ct = nf_ct_get(skb, &ctinfo);
 	if (unlikely(!ct)) {
 		DEBUG_TRACE("no conntrack connection, ignoring\n");
-		goto done1;
+		return NF_ACCEPT;
 	}
 
 	/*
@@ -244,7 +237,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	 */
 	if (unlikely(ct == &nf_conntrack_untracked)) {
 		DEBUG_TRACE("untracked connection\n");
-		goto done1;
+		return NF_ACCEPT;
 	}
 
 	/*
@@ -252,7 +245,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	 */
 	if (unlikely(nfct_help(ct))) {
 		DEBUG_TRACE("connection has helper\n");
-		goto done1;
+		return NF_ACCEPT;
 	}
 
 	/*
@@ -305,7 +298,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 		 */
 		if (!test_bit(IPS_ASSURED_BIT, &ct->status)) {
 			DEBUG_TRACE("non-established connection\n");
-			goto done1;
+			return NF_ACCEPT;
 		}
 
 		/*
@@ -319,7 +312,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 			DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
 				    ct->proto.tcp.state, &sic.src_ip, ntohs(sic.src_port),
 				    &sic.dest_ip, ntohs(sic.dest_port));
-			goto done1;
+			return NF_ACCEPT;
 		}
 		spin_unlock_bh(&ct->lock);
 		break;
@@ -333,45 +326,35 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 
 	default:
 		DEBUG_TRACE("unhandled protocol %d\n", sic.protocol);
-		goto done1;
+		return NF_ACCEPT;
 	}
 
 	/*
-	 * Get the MAC addresses that correspond to source and destination host addresses.
+	 * Get the net device and MAC addresses that correspond to the various source and
+	 * destination host addresses.
 	 */
-	if (!sfe_cm_find_mac_addr(sic.src_ip, sic.src_mac)) {
+	if (!sfe_cm_find_dev_and_mac_addr(sic.src_ip, &src_dev, sic.src_mac)) {
 		DEBUG_TRACE("failed to find MAC address for src IP: %pI4\n", &sic.src_ip);
-		goto done1;
+		return NF_ACCEPT;
 	}
 
-	if (!sfe_cm_find_mac_addr(sic.src_ip_xlate, sic.src_mac_xlate)) {
+	if (!sfe_cm_find_dev_and_mac_addr(sic.src_ip_xlate, &dev, sic.src_mac_xlate)) {
 		DEBUG_TRACE("failed to find MAC address for xlate src IP: %pI4\n", &sic.src_ip_xlate);
 		goto done1;
 	}
 
-	/*
-	 * Do dest now
-	 */
-	if (!sfe_cm_find_mac_addr(sic.dest_ip, sic.dest_mac)) {
+	dev_put(dev);
+
+	if (!sfe_cm_find_dev_and_mac_addr(sic.dest_ip, &dev, sic.dest_mac)) {
 		DEBUG_TRACE("failed to find MAC address for dest IP: %pI4\n", &sic.dest_ip);
 		goto done1;
 	}
 
-	if (!sfe_cm_find_mac_addr(sic.dest_ip_xlate, sic.dest_mac_xlate)) {
+	dev_put(dev);
+
+	if (!sfe_cm_find_dev_and_mac_addr(sic.dest_ip_xlate, &dest_dev, sic.dest_mac_xlate)) {
 		DEBUG_TRACE("failed to find MAC address for xlate dest IP: %pI4\n", &sic.dest_ip_xlate);
 		goto done1;
-	}
-
-	/*
-	 * Get our device info.  If we're dealing with the "reply" direction here then
-	 * we'll need things swapped around.
-	 */
-	if (ctinfo < IP_CT_IS_REPLY) {
-		src_dev = in;
-		dest_dev = (struct net_device *)out;
-	} else {
-		src_dev = (struct net_device *)out;
-		dest_dev = in;
 	}
 
 #if (!SFE_HOOK_ABOVE_BRIDGE)
@@ -383,7 +366,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 		src_br_dev = br_port_dev_get(src_dev, sic.src_mac);
 		if (!src_br_dev) {
 			DEBUG_TRACE("no port found on bridge\n");
-			goto done1;
+			goto done2;
 		}
 
 		src_dev = src_br_dev;
@@ -393,7 +376,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 		dest_br_dev = br_port_dev_get(dest_dev, sic.dest_mac_xlate);
 		if (!dest_br_dev) {
 			DEBUG_TRACE("no port found on bridge\n");
-			goto done2;
+			goto done3;
 		}
 
 		dest_dev = dest_br_dev;
@@ -407,7 +390,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 		src_br_dev = src_dev->master;
 		if (!src_br_dev) {
 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
-			goto done1;
+			goto done2;
 		}
 
 		dev_hold(src_br_dev);
@@ -418,7 +401,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 		dest_br_dev = dest_dev->master;
 		if (!dest_br_dev) {
 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
-			goto done2;
+			goto done3;
 		}
 
 		dev_hold(dest_br_dev);
@@ -429,9 +412,8 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	sic.src_dev = src_dev;
 	sic.dest_dev = dest_dev;
 
-// XXX - these MTUs need handling correctly!
-	sic.src_mtu = 1500;
-	sic.dest_mtu = 1500;
+	sic.src_mtu = src_dev->mtu;
+	sic.dest_mtu = dest_dev->mtu;
 
 	sfe_ipv4_create_rule(&sic);
 
@@ -442,16 +424,16 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 		dev_put(dest_br_dev);
 	}
 
-done2:
+done3:
 	if (src_br_dev) {
 		dev_put(src_br_dev);
 	}
 
+done2:
+	dev_put(dest_dev);
+
 done1:
-	/*
-	 * Release the interface on which this skb arrived
-	 */
-	dev_put(in);
+	dev_put(src_dev);
 
 	return NF_ACCEPT;
 }

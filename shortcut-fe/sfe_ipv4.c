@@ -36,22 +36,22 @@
 #endif
 
 /*
- * The default Linux ethhdr structure is "packed".  It also has byte aligned
- * MAC addresses and this leads to poor performance.  This version is not
- * packed and has better alignment for the MAC addresses.
- */
-struct sfe_ipv4_ethhdr {
-	__be16 h_dest[ETH_ALEN / 2];
-	__be16 h_source[ETH_ALEN / 2];
-	__be16 h_proto;
-};
-
-/*
- * Based on the Linux IPv4 header, but with an optional "packed" attribute to
+ * An Ethernet header, but with an optional "packed" attribute to
  * help with performance on some platforms (see the definition of
  * SFE_IPV4_UNALIGNED_STRUCT)
  */
-struct sfe_ipv4_iphdr {
+struct sfe_ipv4_eth_hdr {
+	__be16 h_dest[ETH_ALEN / 2];
+	__be16 h_source[ETH_ALEN / 2];
+	__be16 h_proto;
+} SFE_IPV4_UNALIGNED_STRUCT;
+
+/*
+ * An IPv4 header, but with an optional "packed" attribute to
+ * help with performance on some platforms (see the definition of
+ * SFE_IPV4_UNALIGNED_STRUCT)
+ */
+struct sfe_ipv4_ip_hdr {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	__u8 ihl:4,
 	     version:4;
@@ -77,11 +77,11 @@ struct sfe_ipv4_iphdr {
 } SFE_IPV4_UNALIGNED_STRUCT;
 
 /*
- * Based on the Linux UDP header, but with an optional "packed" attribute to
+ * A UDP header, but with an optional "packed" attribute to
  * help with performance on some platforms (see the definition of
  * SFE_IPV4_UNALIGNED_STRUCT)
  */
-struct sfe_ipv4_udphdr {
+struct sfe_ipv4_udp_hdr {
 	__be16 source;
 	__be16 dest;
 	__be16 len;
@@ -89,11 +89,11 @@ struct sfe_ipv4_udphdr {
 } SFE_IPV4_UNALIGNED_STRUCT;
 
 /*
- * Based on the Linux TCP header, but with an optional "packed" attribute to
+ * A TCP header, but with an optional "packed" attribute to
  * help with performance on some platforms (see the definition of
  * SFE_IPV4_UNALIGNED_STRUCT)
  */
-struct sfe_ipv4_tcphdr {
+struct sfe_ipv4_tcp_hdr {
 	__be16 source;
 	__be16 dest;
 	__be32 seq;
@@ -152,7 +152,9 @@ struct sfe_ipv4_tcp_connection_match {
 					/* Perform destination translation */
 #define SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK 0x4
 					/* Ignore TCP sequence numbers */
-#define SFE_IPV4_CONNECTION_MATCH_FLAG_FAST_ETH_HDR 0x8
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR 0x8
+					/* Fast Ethernet header write */
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR 0x10
 					/* Fast Ethernet header write */
 
 /*
@@ -458,7 +460,7 @@ struct sfe_ipv4 __si;
  *
  * Note that this function assumes that we have only 20 bytes of IP header.
  */
-static inline uint16_t sfe_ipv4_gen_ip_csum(struct sfe_ipv4_iphdr *iph)
+static inline uint16_t sfe_ipv4_gen_ip_csum(struct sfe_ipv4_ip_hdr *iph)
 {
 	uint32_t sum;
 	uint16_t *i = (uint16_t *)iph;
@@ -824,10 +826,11 @@ static void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark)
 {
 	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
+
 	spin_lock(&si->lock);
 	c = sfe_ipv4_find_sfe_ipv4_connection(si, mark->protocol,
-			mark->src_ip, mark->src_port,
-			mark->dest_ip, mark->dest_port);
+					      mark->src_ip, mark->src_port,
+					      mark->dest_ip, mark->dest_port);
 	if (c) {
 		DEBUG_TRACE("Matching connection found for mark, "
 			    "setting from %08x to %08x\n",
@@ -1090,9 +1093,9 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_i
  *	Handle UDP packet receives and forwarding.
  */
 static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct sfe_ipv4_iphdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct sfe_ipv4_ip_hdr *iph, unsigned int ihl, bool flush_on_find)
 {
-	struct sfe_ipv4_udphdr *udph;
+	struct sfe_ipv4_udp_hdr *udph;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -1104,7 +1107,7 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (unlikely(len < (sizeof(struct sfe_ipv4_udphdr) + ihl))) {
+	if (unlikely(len < (sizeof(struct sfe_ipv4_udp_hdr) + ihl))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1122,7 +1125,7 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	src_ip = iph->saddr;
 	dest_ip = iph->daddr;
 
-	udph = (struct sfe_ipv4_udphdr *)(skb->data + ihl);
+	udph = (struct sfe_ipv4_udp_hdr *)(skb->data + ihl);
 	src_port = udph->source;
 	dest_port = udph->dest;
 
@@ -1246,13 +1249,6 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	iph->check = sfe_ipv4_gen_ip_csum(iph);
 
-//	if ((nat_entry_data->tos & FASTNAT_DSCP_MASK) != (iph->tos & FASTNAT_DSCP_MASK)) {
-//		ipv4_change_dsfield(iph, (u_int8_t)(~FASTNAT_DSCP_MASK), nat_entry_data->tos);
-//	}
-
-//	skb->priority = nat_entry_data->priority;
-//	skb->mark = nat_entry_data->mark;
-
 	/*
 	 * Update traffic stats.
 	 */
@@ -1278,29 +1274,30 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	skb->dev = xmit_dev;
 
 	/*
-	 * Do we have a simple Ethernet header to write?
+	 * Check to see if we need to write a header.
 	 */
-	if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_FAST_ETH_HDR))) {
-		/*
-		 * If this is anything other than a point-to-point interface then we need to
-		 * create a header based on MAC addresses.
-		 */
-		if (likely(!(xmit_dev->flags & IFF_POINTOPOINT))) {
+	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
+		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
 			xmit_dev->header_ops->create(skb, xmit_dev, ETH_P_IP,
 						     cm->xmit_dest_mac, cm->xmit_src_mac, len);
+		} else {
+			/*
+			 * For the simple case we write this really fast.
+			 */
+			struct sfe_ipv4_eth_hdr *eth = (struct sfe_ipv4_eth_hdr *)__skb_push(skb, ETH_HLEN);
+			eth->h_proto = htons(ETH_P_IP);
+			eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
+			eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
+			eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
+			eth->h_source[0] = htons(cm->xmit_src_mac[0]);
+			eth->h_source[1] = htons(cm->xmit_src_mac[1]);
+			eth->h_source[2] = htons(cm->xmit_src_mac[2]);
 		}
-	} else {
-		struct sfe_ipv4_ethhdr *eth = (struct sfe_ipv4_ethhdr *)__skb_push(skb, ETH_HLEN);
-		eth->h_proto = htons(ETH_P_IP);
-		eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
-		eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
-		eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
-		eth->h_source[0] = htons(cm->xmit_src_mac[0]);
-		eth->h_source[1] = htons(cm->xmit_src_mac[1]);
-		eth->h_source[2] = htons(cm->xmit_src_mac[2]);
 	}
 
-	/* Mark outgoing packet */
+	/*
+	 * Mark outgoing packet.
+	 */
 	skb->mark = cm->connection->mark;
 	if (skb->mark) {
 		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
@@ -1327,12 +1324,12 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
  * sfe_ipv4_process_tcp_option_sack()
  *	Parse TCP SACK option and update ack according
  */
-static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcphdr *th, const uint32_t data_offs,
+static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcp_hdr *th, const uint32_t data_offs,
 					     uint32_t *ack) __attribute__((always_inline));
-static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcphdr *th, const uint32_t data_offs,
+static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcp_hdr *th, const uint32_t data_offs,
 					     uint32_t *ack)
 {
-	uint32_t length = sizeof(struct sfe_ipv4_tcphdr);
+	uint32_t length = sizeof(struct sfe_ipv4_tcp_hdr);
 	uint8_t *ptr = (uint8_t *)th + length;
 
 	/*
@@ -1410,9 +1407,9 @@ static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcphdr *th, c
  *	Handle TCP packet receives and forwarding.
  */
 static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct sfe_ipv4_iphdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct sfe_ipv4_ip_hdr *iph, unsigned int ihl, bool flush_on_find)
 {
-	struct sfe_ipv4_tcphdr *tcph;
+	struct sfe_ipv4_tcp_hdr *tcph;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -1426,7 +1423,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (unlikely(len < (sizeof(struct sfe_ipv4_tcphdr) + ihl))) {
+	if (unlikely(len < (sizeof(struct sfe_ipv4_tcp_hdr) + ihl))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_TCP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1444,7 +1441,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	src_ip = iph->saddr;
 	dest_ip = iph->daddr;
 
-	tcph = (struct sfe_ipv4_tcphdr *)(skb->data + ihl);
+	tcph = (struct sfe_ipv4_tcp_hdr *)(skb->data + ihl);
 	src_port = tcph->source;
 	dest_port = tcph->dest;
 	flags = tcp_flag_word(tcph);
@@ -1580,7 +1577,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * Check that our TCP data offset isn't too short.
 		 */
 		data_offs = tcph->doff << 2;
-		if (unlikely(data_offs < sizeof(struct sfe_ipv4_tcphdr))) {
+		if (unlikely(data_offs < sizeof(struct sfe_ipv4_tcp_hdr))) {
 			struct sfe_ipv4_connection *c = cm->connection;
 			sfe_ipv4_remove_sfe_ipv4_connection(si, c);
 			si->exception_events[SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_DATA_OFFS]++;
@@ -1612,7 +1609,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Check that our TCP data offset isn't past the end of the packet.
 		 */
-		data_offs += sizeof(struct sfe_ipv4_iphdr);
+		data_offs += sizeof(struct sfe_ipv4_ip_hdr);
 		if (unlikely(len < data_offs)) {
 			struct sfe_ipv4_connection *c = cm->connection;
 			sfe_ipv4_remove_sfe_ipv4_connection(si, c);
@@ -1757,13 +1754,6 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	iph->check = sfe_ipv4_gen_ip_csum(iph);
 
-//	if ((nat_entry_data->tos & FASTNAT_DSCP_MASK) != (iph->tos & FASTNAT_DSCP_MASK)) {
-//		ipv4_change_dsfield(iph, (u_int8_t)(~FASTNAT_DSCP_MASK), nat_entry_data->tos);
-//	}
-
-//	skb->priority = nat_entry_data->priority;
-//	skb->mark = nat_entry_data->mark;
-
 	/*
 	 * Update traffic stats.
 	 */
@@ -1789,26 +1779,25 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	skb->dev = xmit_dev;
 
 	/*
-	 * Do we have a simple Ethernet header to write?
+	 * Check to see if we need to write a header.
 	 */
-	if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_FAST_ETH_HDR))) {
-		/*
-		 * If this is anything other than a point-to-point interface then we need to
-		 * create a header based on MAC addresses.
-		 */
-		if (likely(!(xmit_dev->flags & IFF_POINTOPOINT))) {
+	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
+		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
 			xmit_dev->header_ops->create(skb, xmit_dev, ETH_P_IP,
 						     cm->xmit_dest_mac, cm->xmit_src_mac, len);
+		} else {
+			/*
+			 * For the simple case we write this really fast.
+			 */
+			struct sfe_ipv4_eth_hdr *eth = (struct sfe_ipv4_eth_hdr *)__skb_push(skb, ETH_HLEN);
+			eth->h_proto = htons(ETH_P_IP);
+			eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
+			eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
+			eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
+			eth->h_source[0] = htons(cm->xmit_src_mac[0]);
+			eth->h_source[1] = htons(cm->xmit_src_mac[1]);
+			eth->h_source[2] = htons(cm->xmit_src_mac[2]);
 		}
-	} else {
-		struct sfe_ipv4_ethhdr *eth = (struct sfe_ipv4_ethhdr *)__skb_push(skb, ETH_HLEN);
-		eth->h_proto = htons(ETH_P_IP);
-		eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
-		eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
-		eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
-		eth->h_source[0] = htons(cm->xmit_src_mac[0]);
-		eth->h_source[1] = htons(cm->xmit_src_mac[1]);
-		eth->h_source[2] = htons(cm->xmit_src_mac[2]);
 	}
 
 	/*
@@ -1847,15 +1836,15 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
  * within Linux has all of the correct state should it need it.
  */
 static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			      unsigned int len, struct sfe_ipv4_iphdr *iph, unsigned int ihl)
+			      unsigned int len, struct sfe_ipv4_ip_hdr *iph, unsigned int ihl)
 {
 	struct icmphdr *icmph;
-	struct sfe_ipv4_iphdr *icmp_iph;
+	struct sfe_ipv4_ip_hdr *icmp_iph;
 	unsigned int icmp_ihl_words;
 	unsigned int icmp_ihl;
 	uint32_t *icmp_trans_h;
-	struct sfe_ipv4_udphdr *icmp_udph;
-	struct sfe_ipv4_tcphdr *icmp_tcph;
+	struct sfe_ipv4_udp_hdr *icmp_udph;
+	struct sfe_ipv4_tcp_hdr *icmp_tcph;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -1896,7 +1885,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	 * Do we have the full embedded IP header?
 	 */
 	len -= sizeof(struct icmphdr);
-	if (unlikely(len < sizeof(struct sfe_ipv4_iphdr))) {
+	if (unlikely(len < sizeof(struct sfe_ipv4_ip_hdr))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1909,7 +1898,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	/*
 	 * Is our embedded IP version wrong?
 	 */
-	icmp_iph = (struct sfe_ipv4_iphdr *)(icmph + 1);
+	icmp_iph = (struct sfe_ipv4_ip_hdr *)(icmph + 1);
 	if (unlikely(icmp_iph->version != 4)) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_NON_V4]++;
@@ -1957,7 +1946,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 			return 0;
 		}
 
-		icmp_udph = (struct sfe_ipv4_udphdr *)icmp_trans_h;
+		icmp_udph = (struct sfe_ipv4_udp_hdr *)icmp_trans_h;
 		src_port = icmp_udph->source;
 		dest_port = icmp_udph->dest;
 		break;
@@ -1977,7 +1966,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 			return 0;
 		}
 
-		icmp_tcph = (struct sfe_ipv4_tcphdr *)icmp_trans_h;
+		icmp_tcph = (struct sfe_ipv4_tcp_hdr *)icmp_trans_h;
 		src_port = icmp_tcph->source;
 		dest_port = icmp_tcph->dest;
 		break;
@@ -2043,14 +2032,14 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	unsigned int ihl;
 	bool flush_on_find;
 	bool ip_options;
-	struct sfe_ipv4_iphdr *iph;
+	struct sfe_ipv4_ip_hdr *iph;
 	uint32_t protocol;
 
 	/*
 	 * Check that we have space for an IP header here.
 	 */
 	len = skb->len;
-	if (unlikely(len < sizeof(struct sfe_ipv4_iphdr))) {
+	if (unlikely(len < sizeof(struct sfe_ipv4_ip_hdr))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -2063,9 +2052,9 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	/*
 	 * Check that our "total length" is large enough for an IP header.
 	 */
-	iph = (struct sfe_ipv4_iphdr *)skb->data;
+	iph = (struct sfe_ipv4_ip_hdr *)skb->data;
 	tot_len = ntohs(iph->tot_len);
-	if (unlikely(tot_len < sizeof(struct sfe_ipv4_iphdr))) {
+	if (unlikely(tot_len < sizeof(struct sfe_ipv4_ip_hdr))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_BAD_TOTAL_LENGTH]++;
 		si->packets_not_forwarded++;
@@ -2125,7 +2114,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	 * options we need to recheck our header size.
 	 */
 	ihl = iph->ihl << 2;
-	ip_options = unlikely(ihl != sizeof(struct sfe_ipv4_iphdr)) ? true : false;
+	ip_options = unlikely(ihl != sizeof(struct sfe_ipv4_ip_hdr)) ? true : false;
 	if (unlikely(ip_options)) {
 		if (unlikely(len < ihl)) {
 			spin_lock(&si->lock);
@@ -2248,6 +2237,11 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	struct sfe_ipv4_connection *c;
 	struct sfe_ipv4_connection_match *original_cm;
 	struct sfe_ipv4_connection_match *reply_cm;
+	struct net_device *dest_dev;
+	struct net_device *src_dev;
+
+	dest_dev = sic->dest_dev;
+	src_dev = sic->src_dev;
 
 	spin_lock_bh(&si->lock);
 	si->connection_create_requests++;
@@ -2311,7 +2305,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	 * we always know both ends of a connection by their translated
 	 * addresses and not their public addresses.
 	 */
-	original_cm->match_dev = sic->src_dev;
+	original_cm->match_dev = src_dev;
 	original_cm->match_protocol = sic->protocol;
 	original_cm->match_src_ip = sic->src_ip;
 	original_cm->match_src_port = sic->src_port;
@@ -2325,9 +2319,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	original_cm->rx_packet_count64 = 0;
 	original_cm->rx_byte_count = 0;
 	original_cm->rx_byte_count64 = 0;
-	original_cm->xmit_dev = sic->dest_dev;
+	original_cm->xmit_dev = dest_dev;
 	original_cm->xmit_dev_mtu = sic->dest_mtu;
-	memcpy(original_cm->xmit_src_mac, sic->dest_dev->dev_addr, ETH_ALEN);
+	memcpy(original_cm->xmit_src_mac, dest_dev->dev_addr, ETH_ALEN);
 	memcpy(original_cm->xmit_dest_mac, sic->dest_mac_xlate, ETH_ALEN);
 	original_cm->connection = c;
 	original_cm->counter_match = reply_cm;
@@ -2335,14 +2329,28 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	original_cm->active_next = NULL;
 	original_cm->active_prev = NULL;
 	original_cm->active = false;
-	if (sic->dest_dev->header_ops->create == eth_header) {
-		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_FAST_ETH_HDR;
+
+	/*
+	 * For PPP links we don't write an L2 header.  For everything else we do.
+	 */
+	if (!(dest_dev->flags & IFF_POINTOPOINT)) {
+		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR;
+
+		/*
+		 * If our dev writes Ethernet headers then we can write a really fast
+		 * version.
+		 */
+		if (dest_dev->header_ops) {
+			if (dest_dev->header_ops->create == eth_header) {
+				original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR;
+			}
+		}
 	}
 
 	/*
 	 * Fill in the "reply" direction connection matching object.
 	 */
-	reply_cm->match_dev = sic->dest_dev;
+	reply_cm->match_dev = dest_dev;
 	reply_cm->match_protocol = sic->protocol;
 	reply_cm->match_src_ip = sic->dest_ip_xlate;
 	reply_cm->match_src_port = sic->dest_port_xlate;
@@ -2356,9 +2364,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	reply_cm->rx_packet_count64 = 0;
 	reply_cm->rx_byte_count = 0;
 	reply_cm->rx_byte_count64 = 0;
-	reply_cm->xmit_dev = sic->src_dev;
+	reply_cm->xmit_dev = src_dev;
 	reply_cm->xmit_dev_mtu = sic->src_mtu;
-	memcpy(reply_cm->xmit_src_mac, sic->src_dev->dev_addr, ETH_ALEN);
+	memcpy(reply_cm->xmit_src_mac, src_dev->dev_addr, ETH_ALEN);
 	memcpy(reply_cm->xmit_dest_mac, sic->src_mac, ETH_ALEN);
 	reply_cm->connection = c;
 	reply_cm->counter_match = original_cm;
@@ -2366,9 +2374,24 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	reply_cm->active_next = NULL;
 	reply_cm->active_prev = NULL;
 	reply_cm->active = false;
-	if (sic->src_dev->header_ops->create == eth_header) {
-		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_FAST_ETH_HDR;
+
+	/*
+	 * For PPP links we don't write an L2 header.  For everything else we do.
+	 */
+	if (!(src_dev->flags & IFF_POINTOPOINT)) {
+		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR;
+
+		/*
+		 * If our dev writes Ethernet headers then we can write a really fast
+		 * version.
+		 */
+		if (src_dev->header_ops) {
+			if (src_dev->header_ops->create == eth_header) {
+				reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR;
+			}
+		}
 	}
+
 
 	if (sic->dest_ip != sic->dest_ip_xlate || sic->dest_port != sic->dest_port_xlate) {
 		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST;
@@ -2385,13 +2408,13 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	c->src_ip_xlate = sic->src_ip_xlate;
 	c->src_port = sic->src_port;
 	c->src_port_xlate = sic->src_port_xlate;
-	c->original_dev = sic->src_dev;
+	c->original_dev = src_dev;
 	c->original_match = original_cm;
 	c->dest_ip = sic->dest_ip;
 	c->dest_ip_xlate = sic->dest_ip_xlate;
 	c->dest_port = sic->dest_port;
 	c->dest_port_xlate = sic->dest_port_xlate;
-	c->reply_dev = sic->dest_dev;
+	c->reply_dev = dest_dev;
 	c->reply_match = reply_cm;
 	c->mark = sic->mark;
 
@@ -2440,7 +2463,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		   sic->mark, sic->protocol,
 		   sic->src_dev->name, sic->src_mac, sic->src_mac_xlate,
 		   &sic->src_ip, &sic->src_ip_xlate, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
-		   sic->dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,
+		   dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,
 		   &sic->dest_ip, &sic->dest_ip_xlate, ntohs(sic->dest_port), ntohs(sic->dest_port_xlate));
 
 	return 0;
@@ -2463,7 +2486,7 @@ void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid)
 	 * to destroy.  If there isn't then we can't destroy it.
 	 */
 	c = sfe_ipv4_find_sfe_ipv4_connection(si, sid->protocol, sid->src_ip, sid->src_port,
-						sid->dest_ip, sid->dest_port);
+					      sid->dest_ip, sid->dest_port);
 	if (!c) {
 		si->connection_destroy_misses++;
 		spin_unlock_bh(&si->lock);

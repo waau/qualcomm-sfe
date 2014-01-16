@@ -1,5 +1,10 @@
 /*
  * User space header to send message to the fast classifier
+ *
+ * Copyright (c) 2013 Qualcomm Atheros, Inc.
+ *
+ * All Rights Reserved.
+ * Qualcomm Atheros Confidential and Proprietary.
  */
 
 #include <linux/if_ether.h>

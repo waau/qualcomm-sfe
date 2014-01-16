@@ -2,7 +2,10 @@
  * sfe_ipv4.h
  *	Shortcut forwarding engine.
  *
- * XXX - fill in the appropriate GPL notice.
+ * Copyright (c) 2013 Qualcomm Atheros, Inc.
+ *
+ * All Rights Reserved.
+ * Qualcomm Atheros Confidential and Proprietary.
  */
 
 /*

@@ -2,8 +2,12 @@
  * sfe_ipv4.c
  *	Shortcut forwarding engine - IPv4 edition.
  *
- * XXX - fill in the appropriate GPL notice.
+ * Copyright (c) 2013 Qualcomm Atheros, Inc.
+ *
+ * All Rights Reserved.
+ * Qualcomm Atheros Confidential and Proprietary.
  */
+
 #include <linux/module.h>
 #include <linux/sysfs.h>
 #include <linux/skbuff.h>
@@ -3477,5 +3481,5 @@ EXPORT_SYMBOL(sfe_ipv4_update_rule);
 
 MODULE_AUTHOR("Qualcomm Atheros Inc.");
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - IPv4 edition");
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("Dual BSD/GPL");
 

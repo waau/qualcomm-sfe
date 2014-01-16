@@ -1,4 +1,9 @@
 #
+# Copyright (c) 2013 Qualcomm Atheros, Inc.
+#
+# All Rights Reserved.
+# Qualcomm Atheros Confidential and Proprietary.
+#
 # Makefile for Shortcut FE.
 #
 

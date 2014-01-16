@@ -441,7 +441,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	sic.src_mtu = 1500;
 	sic.dest_mtu = 1500;
 
-	if (last_pppox_sock && last_pppox_sock->pppoe_dev == in->name) {
+	if (last_pppox_sock->pppoe_dev == in->name) {
 		struct sock *sk = &last_pppox_sock->sk;
 
 		if (sk->sk_family == PF_PPPOX && sk->sk_protocol == PX_PROTO_OE) {

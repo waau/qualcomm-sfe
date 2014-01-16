@@ -21,8 +21,6 @@
 #include <net/genetlink.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
-#include <linux/ratelimit.h>
-#include <linux/if_pppox.h>
 
 #include "../shortcut-fe/sfe.h"
 #include "../shortcut-fe/sfe_ipv4.h"
@@ -126,13 +124,6 @@ int fast_classifier_recv(struct sk_buff *skb)
 
 	dev = skb->dev;
 
-	/*
-	 * And PPPoE packets
-	 */
-	if (htons(ETH_P_PPP_SES) == skb->protocol) {
-		return sfe_pppoe_recv(dev, skb);
-        }
-
 #if (SFE_HOOK_ABOVE_BRIDGE)
 	/*
 	 * Does our input device support IP processing?
@@ -160,7 +151,7 @@ int fast_classifier_recv(struct sk_buff *skb)
 		return sfe_ipv4_recv(dev, skb);
 	}
 
-	DEBUG_TRACE("not IP or PPPoE packet\n");
+	DEBUG_TRACE("not IP packet\n");
 	return 0;
 }
 
@@ -709,17 +700,6 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		DEBUG_TRACE("SKB MARK NON ZERO %x\n", skb->mark);
 	}
 	sic.mark = skb->mark;
-
-	if (last_pppox_sock->pppoe_dev == in->name) {
-		struct sock *sk = &last_pppox_sock->sk;
-
-		if (sk->sk_family == PF_PPPOX && sk->sk_protocol == PX_PROTO_OE) {
-			sic.dest_pppoe_sk = sk;
-		}
-	} else {
-		sic.dest_pppoe_sk = NULL;
-	}
-	sic.src_pppoe_sk = NULL;
 
 	conn = kmalloc(sizeof(struct sfe_connection), GFP_KERNEL);
 	if (conn == NULL) {

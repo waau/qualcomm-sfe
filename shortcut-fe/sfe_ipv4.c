@@ -14,8 +14,6 @@
 #include <linux/icmp.h>
 #include <net/tcp.h>
 #include <linux/etherdevice.h>
-#include <linux/if_pppox.h>
-#include <linux/ppp_defs.h>
 
 #include "sfe.h"
 #include "sfe_ipv4.h"
@@ -224,7 +222,6 @@ struct sfe_ipv4_connection_match {
 					/* Destination MAC address to use when forwarding */
 	uint16_t xmit_src_mac[ETH_ALEN / 2];
 					/* Source MAC address to use when forwarding */
-	struct sock *pppoe_sk;		/* pppoe socket for transmitting to this xmit_dev */
 
 	/*
 	 * Summary stats.
@@ -1077,12 +1074,6 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_i
 		return;
 	}
 
-	if (c->original_match->pppoe_sk) {
-		sock_put(c->original_match->pppoe_sk);
-	}
-	if (c->reply_match->pppoe_sk) {
-		sock_put(c->reply_match->pppoe_sk);
-	}
 	/*
 	 * Release our hold of the source and dest devices and free the memory
 	 * for our connection objects.
@@ -1102,7 +1093,6 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			     unsigned int len, struct sfe_ipv4_iphdr *iph, unsigned int ihl, bool flush_on_find)
 {
 	struct sfe_ipv4_udphdr *udph;
-	__be16 proto;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -1284,41 +1274,8 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		si->active_tail = cm;
 	}
 
-	/*
-	 * On creation, we assume that cm->pppoe_sk is set, and that the socket
-	 * is held.  If the connection is no longer established, we neeed to
-	 * release the socket, and we need to un-offload the connection.  We
-	 * must also release the socket if the connection is closed, of course.
-	 * We assume that the xmit dev, as well as the dest MAC are set based on
-	 * the pppoe header (dest is po->pppoe_pa.remote).
-	 */
-	if (cm->pppoe_sk) {
-		struct pppoe_hdr *ph;
-		int data_len = skb->len;
-		struct sock *sk = cm->pppoe_sk;
-		struct pppox_sock *po = pppox_sk(sk);
-		struct net_device *dev = po->pppoe_dev;
-
-		if (sock_flag(sk, SOCK_DEAD) || !(sk->sk_state & PPPOX_CONNECTED))
-			goto abort;
-
-		ph = (struct pppoe_hdr *)__skb_push(skb, PPPOE_SES_HLEN);
-		ph->ver = 1;
-		ph->type = 1;
-		ph->code = 0;
-		ph->sid = po->num;
-		ph->length = htons(data_len + 2);
-		ph->tag[0].tag_type = htons(PPP_IP);
-		memcpy(cm->xmit_dest_mac, po->pppoe_pa.remote, ETH_ALEN);
-
-		proto = ETH_P_PPP_SES;
-	} else {
-		proto = ETH_P_IP;
-	}
-
 	xmit_dev = cm->xmit_dev;
 	skb->dev = xmit_dev;
-	skb->protocol = cpu_to_be16(proto);
 
 	/*
 	 * Do we have a simple Ethernet header to write?
@@ -1329,12 +1286,12 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * create a header based on MAC addresses.
 		 */
 		if (likely(!(xmit_dev->flags & IFF_POINTOPOINT))) {
-			xmit_dev->header_ops->create(skb, xmit_dev, proto,
+			xmit_dev->header_ops->create(skb, xmit_dev, ETH_P_IP,
 						     cm->xmit_dest_mac, cm->xmit_src_mac, len);
 		}
 	} else {
 		struct sfe_ipv4_ethhdr *eth = (struct sfe_ipv4_ethhdr *)__skb_push(skb, ETH_HLEN);
-		eth->h_proto = skb->protocol;
+		eth->h_proto = htons(ETH_P_IP);
 		eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
 		eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
 		eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
@@ -1363,10 +1320,6 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	dev_queue_xmit(skb);
 
-	return 1;
-
-abort:
-	kfree_skb(skb);
 	return 1;
 }
 
@@ -1464,7 +1417,6 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	__be32 dest_ip;
 	__be16 src_port;
 	__be16 dest_port;
-	__be16 proto;
 	struct sfe_ipv4_connection_match *cm;
 	struct sfe_ipv4_connection_match *counter_cm;
 	uint8_t ttl;
@@ -1833,33 +1785,8 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		si->active_tail = cm;
 	}
 
-	if (cm->pppoe_sk) {
-		struct pppoe_hdr *ph;
-		int data_len = skb->len;
-		struct sock *sk = cm->pppoe_sk;
-		struct pppox_sock *po = pppox_sk(sk);
-		struct net_device *dev = po->pppoe_dev;
-
-		if (sock_flag(sk, SOCK_DEAD) || !(sk->sk_state & PPPOX_CONNECTED))
-			goto abort;
-
-		ph = (struct pppoe_hdr *)__skb_push(skb, PPPOE_SES_HLEN);
-		ph->ver = 1;
-		ph->type = 1;
-		ph->code = 0;
-		ph->sid = po->num;
-		ph->length = htons(data_len + 2);
-		ph->tag[0].tag_type = htons(PPP_IP);
-		memcpy(cm->xmit_dest_mac, po->pppoe_pa.remote, ETH_ALEN);
-
-		proto = ETH_P_PPP_SES;
-	} else {
-		proto = ETH_P_IP;
-	}
-
 	xmit_dev = cm->xmit_dev;
 	skb->dev = xmit_dev;
-	skb->protocol = cpu_to_be16(proto);
 
 	/*
 	 * Do we have a simple Ethernet header to write?
@@ -1870,12 +1797,12 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * create a header based on MAC addresses.
 		 */
 		if (likely(!(xmit_dev->flags & IFF_POINTOPOINT))) {
-			xmit_dev->header_ops->create(skb, xmit_dev, proto,
+			xmit_dev->header_ops->create(skb, xmit_dev, ETH_P_IP,
 						     cm->xmit_dest_mac, cm->xmit_src_mac, len);
 		}
 	} else {
 		struct sfe_ipv4_ethhdr *eth = (struct sfe_ipv4_ethhdr *)__skb_push(skb, ETH_HLEN);
-		eth->h_proto = skb->protocol;
+		eth->h_proto = htons(ETH_P_IP);
 		eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
 		eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
 		eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
@@ -1906,10 +1833,6 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	dev_queue_xmit(skb);
 
-	return 1;
-
-abort:
-	kfree_skb(skb);
 	return 1;
 }
 
@@ -2105,57 +2028,9 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	return 0;
 }
 
-int sfe_pppoe_recv(struct net_device *dev, struct sk_buff *skb)
-{
-	int offloaded;
-	int ppplen, skblen, proto;
-	struct pppoe_hdr *phdr;
-
-	if (!pskb_may_pull(skb, PPPOE_SES_HLEN)) {
-		DEBUG_TRACE( "sfe pppoe: failed at pskb_may_pull\n");
-		return 0;
-	}
-
-	phdr = pppoe_hdr(skb);
-	ppplen = ntohs(phdr->length) - sizeof(struct pppoe_tag);
-	skblen = skb->len - PPPOE_SES_HLEN;
-	proto = skb->protocol;
-
-	/* check pppoe len < len */
-	if (skblen < ppplen) {
-		DEBUG_TRACE( "sfe pppoe: skblen (%d) < ppplen (%d)\n",
-				skblen, ppplen);
-		return 0;
-	}
-
-	/* We already calculated the skblen diff; inline skb_pull */
-	skb->len = skblen;
-	BUG_ON(skb->len < skb->data_len);
-	skb->data += PPPOE_SES_HLEN;
-	switch(ntohs(phdr->tag[0].tag_type)) {
-		case PPP_IP:
-			skb->protocol = ETH_P_IP;
-			offloaded = sfe_ipv4_recv(dev, skb);
-			break;
-		default:
-			DEBUG_TRACE("sfe pppoe: unknown protocol %x",
-					ntohs(phdr->tag[0].tag_type));
-			offloaded = 0;
-			break;
-	}
-
-	if (!offloaded) {
-		/* Put the packet back the way we found it - not offloaded */
-		skb_push(skb, PPPOE_SES_HLEN);
-		skb->protocol = proto;
-	}
-
-	return offloaded;
-}
-
 /*
  * sfe_ipv4_recv()
- *	Handle packet receives and forwarding.
+ *	Handle packet receives and forwaring.
  *
  * Returns 1 if the packet is forwarded or 0 if it isn't.
  */
@@ -2450,13 +2325,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	original_cm->rx_packet_count64 = 0;
 	original_cm->rx_byte_count = 0;
 	original_cm->rx_byte_count64 = 0;
-	original_cm->pppoe_sk = sic->dest_pppoe_sk;
-	if (original_cm->pppoe_sk) {
-		sock_hold(original_cm->pppoe_sk);
-		original_cm->xmit_dev = pppox_sk(original_cm->pppoe_sk)->pppoe_dev;
-	} else {
-		original_cm->xmit_dev = sic->dest_dev;
-	}
+	original_cm->xmit_dev = sic->dest_dev;
 	original_cm->xmit_dev_mtu = sic->dest_mtu;
 	memcpy(original_cm->xmit_src_mac, sic->dest_dev->dev_addr, ETH_ALEN);
 	memcpy(original_cm->xmit_dest_mac, sic->dest_mac_xlate, ETH_ALEN);
@@ -2487,13 +2356,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	reply_cm->rx_packet_count64 = 0;
 	reply_cm->rx_byte_count = 0;
 	reply_cm->rx_byte_count64 = 0;
-	reply_cm->pppoe_sk = sic->src_pppoe_sk;
-	if (reply_cm->pppoe_sk) {
-		sock_hold(reply_cm->pppoe_sk);
-		reply_cm->xmit_dev = pppox_sk(reply_cm->pppoe_sk)->pppoe_dev;
-	} else {
-		reply_cm->xmit_dev = sic->src_dev;
-	}
+	reply_cm->xmit_dev = sic->src_dev;
 	reply_cm->xmit_dev_mtu = sic->src_mtu;
 	memcpy(reply_cm->xmit_src_mac, sic->src_dev->dev_addr, ETH_ALEN);
 	memcpy(reply_cm->xmit_dest_mac, sic->src_mac, ETH_ALEN);
@@ -2506,7 +2369,6 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	if (sic->src_dev->header_ops->create == eth_header) {
 		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_FAST_ETH_HDR;
 	}
-
 
 	if (sic->dest_ip != sic->dest_ip_xlate || sic->dest_port != sic->dest_port_xlate) {
 		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST;
@@ -2523,13 +2385,13 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	c->src_ip_xlate = sic->src_ip_xlate;
 	c->src_port = sic->src_port;
 	c->src_port_xlate = sic->src_port_xlate;
-	c->original_dev = reply_cm->xmit_dev;
+	c->original_dev = sic->src_dev;
 	c->original_match = original_cm;
 	c->dest_ip = sic->dest_ip;
 	c->dest_ip_xlate = sic->dest_ip_xlate;
 	c->dest_port = sic->dest_port;
 	c->dest_port_xlate = sic->dest_port_xlate;
-	c->reply_dev = original_cm->xmit_dev;
+	c->reply_dev = sic->dest_dev;
 	c->reply_match = reply_cm;
 	c->mark = sic->mark;
 
@@ -2722,14 +2584,6 @@ void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev)
 		 */
 		if (sfe_ipv4_decrement_sfe_ipv4_connection_iterator(si, c)) {
 			spin_unlock_bh(&si->lock);
-
-			if (c->original_match->pppoe_sk) {
-				sock_put(c->original_match->pppoe_sk);
-			}
-			if (c->reply_match->pppoe_sk) {
-				sock_put(c->reply_match->pppoe_sk);
-			}
-
 			/*
 			 * This entry is dead so release our hold of the source and
 			 * dest devices and free the memory for our connection objects.
@@ -2962,12 +2816,6 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	if (sfe_ipv4_decrement_sfe_ipv4_connection_iterator(si, c)) {
 		spin_unlock_bh(&si->lock);
 
-		if (c->original_match->pppoe_sk) {
-			sock_put(c->original_match->pppoe_sk);
-		}
-		if (c->reply_match->pppoe_sk) {
-			sock_put(c->reply_match->pppoe_sk);
-		}
 		/*
 		 * This entry is dead so release our hold of the source and
 		 * dest devices and free the memory for our connection objects.
@@ -3345,12 +3193,6 @@ static int sfe_ipv4_debug_dev_release(struct inode *inode, struct file *file)
 			if (sfe_ipv4_decrement_sfe_ipv4_connection_iterator(si, c)) {
 				spin_unlock_bh(&si->lock);
 
-				if (c->original_match->pppoe_sk) {
-					sock_put(c->original_match->pppoe_sk);
-				}
-				if (c->reply_match->pppoe_sk) {
-					sock_put(c->reply_match->pppoe_sk);
-				}
 				/*
 				 * This entry is dead so release our hold of the source and
 				 * dest devices and free the memory for our connection objects.
@@ -3471,7 +3313,6 @@ module_init(sfe_ipv4_init)
 module_exit(sfe_ipv4_exit)
 
 EXPORT_SYMBOL(sfe_ipv4_recv);
-EXPORT_SYMBOL(sfe_pppoe_recv);
 EXPORT_SYMBOL(sfe_ipv4_create_rule);
 EXPORT_SYMBOL(sfe_ipv4_destroy_rule);
 EXPORT_SYMBOL(sfe_ipv4_destroy_all_rules_for_dev);

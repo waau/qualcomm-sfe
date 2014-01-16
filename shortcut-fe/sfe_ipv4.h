@@ -21,8 +21,6 @@ struct sfe_ipv4_create {
 	int protocol;
 	struct net_device *src_dev;
 	struct net_device *dest_dev;
-	struct sock *src_pppoe_sk;
-	struct sock *dest_pppoe_sk;
 	uint32_t flags;
 	uint32_t src_mtu;
 	uint32_t dest_mtu;
@@ -91,7 +89,6 @@ struct sfe_ipv4_sync {
 typedef void (*sfe_ipv4_sync_rule_callback_t)(struct sfe_ipv4_sync *);
 
 extern int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb);
-extern int sfe_pppoe_recv(struct net_device *dev, struct sk_buff *skb);
 extern int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic);
 extern void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid);
 extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);

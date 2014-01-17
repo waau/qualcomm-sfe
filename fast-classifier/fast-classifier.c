@@ -420,7 +420,6 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	struct sfe_connection *conn;
 	int sfe_connections_size = 0;
 	unsigned long flags;
-	struct ethhdr *mh = eth_hdr(skb);
 
 	/*
 	 * Don't process broadcast or multicast packets.
@@ -713,8 +712,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	conn->hits = 0;
 	conn->offloaded = 0;
 	DEBUG_TRACE("Source MAC=%pM\n", mh->h_source);
-	memcpy(conn->smac, mh->h_source, ETH_ALEN);
-	memcpy(conn->dmac, mh->h_dest, ETH_ALEN);
+	memcpy(conn->smac, sic.src_mac, ETH_ALEN);
+	memcpy(conn->dmac, sic.dest_mac_xlate, ETH_ALEN);
 
 	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_KERNEL);
 	if (p_sic == NULL) {

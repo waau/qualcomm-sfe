@@ -230,7 +230,8 @@ struct sfe_connection {
 	struct nf_conn *ct;
 	int hits;
 	int offloaded;
-	unsigned char mac[ETH_ALEN];
+	unsigned char smac[ETH_ALEN];
+	unsigned char dmac[ETH_ALEN];
 };
 
 static LIST_HEAD(sfe_connections);
@@ -317,12 +318,13 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 	}
 	genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp.id, GFP_ATOMIC);
 
-	DEBUG_TRACE("INFO: %d : %d, %pI4, %pI4, %d, %d MAC=%pM\n",
+	DEBUG_TRACE("INFO: %d : %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
 			msg, fc_msg->proto,
 			&(fc_msg->src_saddr),
 			&(fc_msg->dst_saddr),
 			fc_msg->sport, fc_msg->dport,
-			fc_msg->mac);
+			fc_msg->smac,
+			fc_msg->dmac);
 }
 
 /*
@@ -341,12 +343,13 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
 
-	DEBUG_TRACE("INFO: want to offload: %d, %pI4, %pI4, %d, %d MAC=%pM\n",
+	DEBUG_TRACE("INFO: want to offload: %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
 			fc_msg->proto,
 			&(fc_msg->src_saddr),
 			&(fc_msg->dst_saddr),
 			fc_msg->sport, fc_msg->dport,
-			fc_msg->mac);
+			fc_msg->smac,
+			fc_msg->dmac);
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 	list_for_each_entry(conn, &sfe_connections, list) {
@@ -573,7 +576,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 						fc_msg.dst_saddr = sic.dest_ip;
 						fc_msg.sport = sic.src_port;
 						fc_msg.dport = sic.dest_port;
-						memcpy(fc_msg.mac, conn->mac, ETH_ALEN);
+						memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
+						memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
 						fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, &fc_msg);
 					}
 
@@ -709,7 +713,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	conn->hits = 0;
 	conn->offloaded = 0;
 	DEBUG_TRACE("Source MAC=%pM\n", mh->h_source);
-	memcpy(conn->mac, mh->h_source, ETH_ALEN);
+	memcpy(conn->smac, mh->h_source, ETH_ALEN);
+	memcpy(conn->dmac, mh->h_dest, ETH_ALEN);
 
 	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_KERNEL);
 	if (p_sic == NULL) {
@@ -909,7 +914,8 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 			fc_msg.dst_saddr = p_sic->dest_ip;
 			fc_msg.sport = p_sic->src_port;
 			fc_msg.dport = p_sic->dest_port;
-			memcpy(fc_msg.mac, conn->mac, ETH_ALEN);
+			memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
+			memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
 			sfe_found_match = 1;
 			DEBUG_TRACE("FOUND, DELETING\n");
 			break;

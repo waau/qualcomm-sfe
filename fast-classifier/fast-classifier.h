@@ -36,5 +36,6 @@ struct fast_classifier_tuple {
 	unsigned long dst_saddr;
 	unsigned short sport;
 	unsigned short dport;
-	unsigned char mac[ETH_ALEN];
+	unsigned char smac[ETH_ALEN];
+	unsigned char dmac[ETH_ALEN];
 };

@@ -803,6 +803,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	int sfe_connections_size = 0;
 	unsigned long flags;
 	struct fast_classifier_tuple fc_msg;
+	int offloaded = 0;
 
 	/*
 	 * If we don't have a conntrack entry then we're done.
@@ -917,6 +918,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 			memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
 			memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
 			sfe_found_match = 1;
+			offloaded = conn->offloaded;
 			DEBUG_TRACE("FOUND, DELETING\n");
 			break;
 		}
@@ -938,7 +940,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 
 	sfe_ipv4_destroy_rule(&sid);
 
-	if (sfe_found_match) {
+	if (sfe_found_match && offloaded) {
 		fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_DONE, &fc_msg);
 	}
 

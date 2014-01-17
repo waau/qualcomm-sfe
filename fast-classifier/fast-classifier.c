@@ -92,6 +92,10 @@ static struct genl_ops fast_classifier_gnl_ops[] = {
 	},
 };
 
+atomic_t offload_msgs = ATOMIC_INIT(0);
+atomic_t offload_no_match_msgs = ATOMIC_INIT(0);
+atomic_t offloaded_msgs = ATOMIC_INIT(0);
+atomic_t done_msgs = ATOMIC_INIT(0);
 /*
  * Expose the hook for the receive processing.
  */
@@ -233,6 +237,7 @@ struct sfe_connection {
 	unsigned char smac[ETH_ALEN];
 	unsigned char dmac[ETH_ALEN];
 };
+static int sfe_connections_size = 0;
 
 static LIST_HEAD(sfe_connections);
 
@@ -325,6 +330,18 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 			fc_msg->sport, fc_msg->dport,
 			fc_msg->smac,
 			fc_msg->dmac);
+
+	switch (msg) {
+		case FAST_CLASSIFIER_C_OFFLOADED:
+			atomic_inc(&offloaded_msgs);
+			break;
+		case FAST_CLASSIFIER_C_DONE:
+			atomic_inc(&done_msgs);
+			break;
+		default:
+			DEBUG_ERROR("fast-classifer: Unknown message type sent!\n");
+			break;
+	}
 }
 
 /*
@@ -378,6 +395,7 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 					conn->offloaded = 1;
 					fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, fc_msg);
 				}
+				atomic_inc(&offload_msgs);
 				return 0;
 			}
 			/* conn->offloaded != 0 */
@@ -389,6 +407,7 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 	}
 
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	atomic_inc(&offload_no_match_msgs);
 	return 0;
 }
 
@@ -418,7 +437,6 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	struct nf_conntrack_tuple orig_tuple;
 	struct nf_conntrack_tuple reply_tuple;
 	struct sfe_connection *conn;
-	int sfe_connections_size = 0;
 	unsigned long flags;
 
 	/*
@@ -598,7 +616,6 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		}
 
 		DEBUG_TRACE("SEARCH CONTINUES");
-		sfe_connections_size++;
 	}
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
 
@@ -725,7 +742,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	memcpy(p_sic, &sic, sizeof(sic));
 	conn->sic = p_sic;
 	conn->ct = ct;
-	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", ++sfe_connections_size);
+	sfe_connections_size++;
+	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", sfe_connections_size);
 	DEBUG_TRACE("POST_ROUTE: new offloadable connection: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
 			p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
 			p_sic->src_port, p_sic->dest_port);
@@ -799,7 +817,6 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	struct sfe_connection *conn;
 	struct sfe_ipv4_create *p_sic;
 	int sfe_found_match = 0;
-	int sfe_connections_size = 0;
 	unsigned long flags;
 	struct fast_classifier_tuple fc_msg;
 	int offloaded = 0;
@@ -922,7 +939,6 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 			break;
 		}
 		DEBUG_TRACE("SEARCH CONTINUES\n");
-		sfe_connections_size++;
 	}
 
 	if (sfe_found_match) {
@@ -931,6 +947,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 				p_sic->src_port, p_sic->dest_port);
 		kfree(conn->sic);
 		list_del(&(conn->list));
+		sfe_connections_size--;
 		kfree(conn);
 	} else {
 		DEBUG_TRACE("NO MATCH FOUND IN %d ENTRIES!!\n", sfe_connections_size);
@@ -1124,10 +1141,49 @@ static ssize_t fast_classifier_set_offload_at_pkts(struct device *dev,
 }
 
 /*
+ * fast_classifier_get_debug_info()
+ */
+static ssize_t fast_classifier_get_debug_info(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buf)
+{
+	size_t len = 0;
+	unsigned long flags;
+	struct sfe_connection *conn;
+
+	spin_lock_irqsave(&sfe_connections_lock, flags);
+	len += scnprintf(buf, PAGE_SIZE - len, "len = %d msg sent: offload = %d offload_no_match = %d"
+			" offloaded = %d done = %d\n",
+			sfe_connections_size,
+			atomic_read(&offload_msgs),
+			atomic_read(&offload_no_match_msgs),
+			atomic_read(&offloaded_msgs),
+			atomic_read(&done_msgs));
+	list_for_each_entry(conn, &sfe_connections, list) {
+		len += scnprintf(buf + len , PAGE_SIZE - len, "offloaded=%d, proto=%d, src_ip=%pI4, dest_ip=%pI4,"
+				" src_port=%d, dest_port=%d SMAC=%pM DMAC=%pM mark=%08x\n",
+				conn->offloaded,
+				conn->sic->protocol,
+				&(conn->sic->src_ip),
+				&(conn->sic->dest_ip),
+				conn->sic->src_port,
+				conn->sic->dest_port,
+				conn->smac,
+				conn->dmac,
+				conn->sic->mark);
+	}
+	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+
+	return len;
+}
+
+/*
  * sysfs attributes.
  */
 static const struct device_attribute fast_classifier_offload_at_pkts_attr =
 	__ATTR(offload_at_pkts, S_IWUGO | S_IRUGO, fast_classifier_get_offload_at_pkts, fast_classifier_set_offload_at_pkts);
+static const struct device_attribute fast_classifier_debug_info_attr =
+	__ATTR(debug_info, S_IRUGO, fast_classifier_get_debug_info, NULL);
 
 /*
  * fast_classifier_init()
@@ -1152,6 +1208,13 @@ static int __init fast_classifier_init(void)
 	result = sysfs_create_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
+		goto exit2;
+	}
+
+	result = sysfs_create_file(sc->sys_fast_classifier, &fast_classifier_debug_info_attr.attr);
+	if (result) {
+		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
+		sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
 		goto exit2;
 	}
 
@@ -1234,6 +1297,7 @@ exit3:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
 	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
+	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_debug_info_attr.attr);
 
 exit2:
 	kobject_put(sc->sys_fast_classifier);

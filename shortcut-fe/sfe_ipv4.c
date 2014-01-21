@@ -3156,7 +3156,6 @@ static ssize_t sfe_ipv4_debug_dev_write(struct file *filp, const char *buffer, s
 	spin_lock_bh(&si->lock);
 	sfe_ipv4_update_summary_stats(si);
 
-	si->num_connections = 0;
 	si->packets_forwarded64 = 0;
 	si->packets_not_forwarded64 = 0;
 	si->connection_create_requests64 = 0;

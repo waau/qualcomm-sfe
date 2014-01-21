@@ -1134,25 +1134,26 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 	struct sfe_connection *conn;
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	len += scnprintf(buf, PAGE_SIZE - len, "len = %d msg sent: offload = %d offload_no_match = %d"
-			" offloaded = %d done = %d\n",
+	len += scnprintf(buf, PAGE_SIZE - len, "size=%d offload=%d offload_no_match=%d"
+			" offloaded=%d done=%d\n",
 			sfe_connections_size,
 			atomic_read(&offload_msgs),
 			atomic_read(&offload_no_match_msgs),
 			atomic_read(&offloaded_msgs),
 			atomic_read(&done_msgs));
 	list_for_each_entry(conn, &sfe_connections, list) {
-		len += scnprintf(buf + len , PAGE_SIZE - len, "offloaded=%d, proto=%d, src_ip=%pI4, dest_ip=%pI4,"
-				" src_port=%d, dest_port=%d SMAC=%pM DMAC=%pM mark=%08x\n",
+		len += scnprintf(buf + len , PAGE_SIZE - len,
+				"o=%d, p=%d [%pM]:%pI4:%u %pI4:%u:[%pM] m=%08x h=%d\n",
 				conn->offloaded,
 				conn->sic->protocol,
+				conn->sic->src_mac,
 				&(conn->sic->src_ip),
-				&(conn->sic->dest_ip),
 				conn->sic->src_port,
+				&(conn->sic->dest_ip),
 				conn->sic->dest_port,
-				conn->smac,
-				conn->dmac,
-				conn->sic->mark);
+				conn->sic->dest_mac_xlate,
+				conn->sic->mark,
+				conn->hits);
 	}
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
 

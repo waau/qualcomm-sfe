@@ -1113,7 +1113,6 @@ static ssize_t fast_classifier_set_offload_at_pkts(struct device *dev,
 	long new;
 	int ret;
 
-	printk(KERN_EMERG "BUF: %s\n", buf);
 	ret = strict_strtol(buf, 0, &new);
 	if (ret == -EINVAL || ((int)new != new))
 		return -EINVAL;

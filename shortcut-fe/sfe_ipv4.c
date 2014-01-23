@@ -737,20 +737,21 @@ static inline void sfe_ipv4_remove_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 	}
 
 	/*
-	 * Unlink the connection match entry from the active list.
+	 * If the connection match entry is in the active list remove it.
 	 */
-	if (likely(cm->active_prev)) {
-		cm->active_prev->active_next = cm->active_next;
-	} else {
-		si->active_head = cm->active_next;
-	}
+	if (cm->active) {
+		if (likely(cm->active_prev)) {
+			cm->active_prev->active_next = cm->active_next;
+		} else {
+			si->active_head = cm->active_next;
+		}
 
-	if (likely(cm->active_next)) {
-		cm->active_next->active_prev = cm->active_prev;
-	} else {
-		si->active_tail = cm->active_prev;
+		if (likely(cm->active_next)) {
+			cm->active_next->active_prev = cm->active_prev;
+		} else {
+			si->active_tail = cm->active_prev;
+		}
 	}
-
 }
 
 /*
@@ -2667,32 +2668,20 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 			break;
 		}
 
-		cm->active = false;
-
 		/*
-		 * Having found an entry we now remove it from the active scan list.
-		 */
-		si->active_head = cm->active_next;
-		if (likely(cm->active_next)) {
-			cm->active_next->active_prev = NULL;
-		} else {
-			si->active_tail = NULL;
-		}
-		cm->active_next = NULL;
-
-		/*
-		 * We scan the connection match lists so there's a possibility that our
-		 * counter match is in the list too.  If it is then remove it.
+		 * There's a possibility that our counter match is in the active list too. 
+		 * If it is then remove it.
 		 */
 		counter_cm = cm->counter_match;
 		if (counter_cm->active) {
 			counter_cm->active = false;
 
-			if (likely(counter_cm->active_prev)) {
-				counter_cm->active_prev->active_next = counter_cm->active_next;
-			} else {
-				si->active_head = counter_cm->active_next;
-			}
+			/*
+			 * We must have a connection preceding this counter match
+			 * because that's the one that got us to this point, so we don't have
+			 * to worry about removing the head of the list.
+			 */
+			counter_cm->active_prev->active_next = counter_cm->active_next;
 
 			if (likely(counter_cm->active_next)) {
 				counter_cm->active_next->active_prev = counter_cm->active_prev;
@@ -2703,6 +2692,18 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 			counter_cm->active_next = NULL;
 			counter_cm->active_prev = NULL;
 		}
+
+		/*
+		 * Now remove the head of the active scan list.
+		 */
+		cm->active = false;
+		si->active_head = cm->active_next;
+		if (likely(cm->active_next)) {
+			cm->active_next->active_prev = NULL;
+		} else {
+			si->active_tail = NULL;
+		}
+		cm->active_next = NULL;
 
 		/*
 		 * Sync the connection state.
@@ -2722,7 +2723,7 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 	rcu_read_unlock();
 
 done:
-	mod_timer(&si->timer, jiffies + (HZ / 100));
+	mod_timer(&si->timer, jiffies + ((HZ + 99) / 100));
 }
 
 #define CHAR_DEV_MSG_SIZE 768
@@ -3289,7 +3290,7 @@ static int __init sfe_ipv4_init(void)
 	 * Create a timer to handle periodic statistics.
 	 */
 	setup_timer(&si->timer, sfe_ipv4_periodic_sync, (unsigned long)si);
-	mod_timer(&si->timer, jiffies + (HZ / 100));
+	mod_timer(&si->timer, jiffies + ((HZ + 99) / 100));
 
 	spin_lock_init(&si->lock);
 

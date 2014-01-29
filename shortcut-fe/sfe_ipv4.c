@@ -3222,11 +3222,13 @@ static int sfe_ipv4_debug_dev_release(struct inode *inode, struct file *file)
 		c = ws->iter_conn;
 		if (c) {
 			struct sfe_ipv4 *si = &__si;
+			bool free_connection;
 
 			spin_lock_bh(&si->lock);
-			if (sfe_ipv4_decrement_sfe_ipv4_connection_iterator(si, c)) {
-				spin_unlock_bh(&si->lock);
+			free_connection = sfe_ipv4_decrement_sfe_ipv4_connection_iterator(si, c);
+			spin_unlock_bh(&si->lock);
 
+			if (free_connection) {
 				/*
 				 * This entry is dead so release our hold of the source and
 				 * dest devices and free the memory for our connection objects.

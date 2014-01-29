@@ -2618,6 +2618,7 @@ void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev)
 		 */
 		if (sfe_ipv4_decrement_sfe_ipv4_connection_iterator(si, c)) {
 			spin_unlock_bh(&si->lock);
+
 			/*
 			 * This entry is dead so release our hold of the source and
 			 * dest devices and free the memory for our connection objects.
@@ -2679,7 +2680,7 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 		}
 
 		/*
-		 * There's a possibility that our counter match is in the active list too. 
+		 * There's a possibility that our counter match is in the active list too.
 		 * If it is then remove it.
 		 */
 		counter_cm = cm->counter_match;
@@ -3158,7 +3159,7 @@ static ssize_t sfe_ipv4_debug_dev_read(struct file *filp, char *buffer, size_t l
 
 /*
  * sfe_ipv4_debug_dev_write()
- *	Write to char device resets some stats 
+ *	Write to char device resets some stats
  */
 static ssize_t sfe_ipv4_debug_dev_write(struct file *filp, const char *buffer, size_t length, loff_t *offset)
 {

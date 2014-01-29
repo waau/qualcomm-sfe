@@ -1314,6 +1314,11 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	prefetch(skb_shinfo(skb));
 
 	/*
+	 * Mark that this packet has been fast forwarded.
+	 */
+	skb->fast_forwarded = 1;
+
+	/*
 	 * Send the packet on its way.
 	 */
 	dev_queue_xmit(skb);
@@ -1817,6 +1822,11 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 * start fetching the necessary cache line now.
 	 */
 	prefetch(skb_shinfo(skb));
+
+	/*
+	 * Mark that this packet has been fast forwarded.
+	 */
+	skb->fast_forwarded = 1;
 
 	/*
 	 * Send the packet on its way.

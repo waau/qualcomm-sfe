@@ -823,7 +823,7 @@ static inline struct sfe_ipv4_connection *sfe_ipv4_find_sfe_ipv4_connection(stru
  *
  * Will take hash lock upon entry
  */
-static void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark)
+void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark)
 {
 	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;

@@ -106,4 +106,4 @@ struct sfe_ipv4_mark {
 	__be16 dest_port;
 	uint32_t mark;
 };
-static void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark);
+extern void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark);

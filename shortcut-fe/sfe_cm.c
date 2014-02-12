@@ -445,11 +445,14 @@ done1:
  */
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
 static int sfe_cm_conntrack_event(struct notifier_block *this,
-			unsigned int events, struct nf_ct_event *item)
+			unsigned long events, void *ptr)
 #else
 static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 #endif
 {
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+	struct nf_ct_event *item = ptr;
+#endif
 	struct sfe_ipv4_destroy sid;
 	struct nf_conn *ct = item->ct;
 	struct nf_conntrack_tuple orig_tuple;

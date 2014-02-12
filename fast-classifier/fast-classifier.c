@@ -789,11 +789,14 @@ static void fast_classifier_update_mark(struct sfe_ipv4_mark *mark)
  */
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
 static int fast_classifier_conntrack_event(struct notifier_block *this,
-				unsigned int events, struct nf_ct_event *item)
+				unsigned long events, void *ptr)
 #else
 static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_event *item)
 #endif
 {
+#ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
+	struct nf_ct_event *item = ptr;
+#endif
 	struct sfe_ipv4_destroy sid;
 	struct nf_conn *ct = item->ct;
 	struct nf_conntrack_tuple orig_tuple;
@@ -1108,7 +1111,7 @@ static ssize_t fast_classifier_get_offload_at_pkts(struct device *dev,
  */
 static ssize_t fast_classifier_set_offload_at_pkts(struct device *dev,
 					struct device_attribute *attr,
-					char *buf, size_t size)
+					const char *buf, size_t size)
 {
 	long new;
 	int ret;

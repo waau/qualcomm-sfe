@@ -1287,12 +1287,12 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			 */
 			struct sfe_ipv4_eth_hdr *eth = (struct sfe_ipv4_eth_hdr *)__skb_push(skb, ETH_HLEN);
 			eth->h_proto = htons(ETH_P_IP);
-			eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
-			eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
-			eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
-			eth->h_source[0] = htons(cm->xmit_src_mac[0]);
-			eth->h_source[1] = htons(cm->xmit_src_mac[1]);
-			eth->h_source[2] = htons(cm->xmit_src_mac[2]);
+			eth->h_dest[0] = cm->xmit_dest_mac[0];
+			eth->h_dest[1] = cm->xmit_dest_mac[1];
+			eth->h_dest[2] = cm->xmit_dest_mac[2];
+			eth->h_source[0] = cm->xmit_src_mac[0];
+			eth->h_source[1] = cm->xmit_src_mac[1];
+			eth->h_source[2] = cm->xmit_src_mac[2];
 		}
 	}
 
@@ -1797,12 +1797,12 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			 */
 			struct sfe_ipv4_eth_hdr *eth = (struct sfe_ipv4_eth_hdr *)__skb_push(skb, ETH_HLEN);
 			eth->h_proto = htons(ETH_P_IP);
-			eth->h_dest[0] = htons(cm->xmit_dest_mac[0]);
-			eth->h_dest[1] = htons(cm->xmit_dest_mac[1]);
-			eth->h_dest[2] = htons(cm->xmit_dest_mac[2]);
-			eth->h_source[0] = htons(cm->xmit_src_mac[0]);
-			eth->h_source[1] = htons(cm->xmit_src_mac[1]);
-			eth->h_source[2] = htons(cm->xmit_src_mac[2]);
+			eth->h_dest[0] = cm->xmit_dest_mac[0];
+			eth->h_dest[1] = cm->xmit_dest_mac[1];
+			eth->h_dest[2] = cm->xmit_dest_mac[2];
+			eth->h_source[0] = cm->xmit_src_mac[0];
+			eth->h_source[1] = cm->xmit_src_mac[1];
+			eth->h_source[2] = cm->xmit_src_mac[2];
 		}
 	}
 

@@ -952,11 +952,19 @@ static void sfe_ipv4_gen_sync_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sf
 	sis->dest_td_end = reply_cm->protocol_state.tcp.end;
 	sis->dest_td_max_end = reply_cm->protocol_state.tcp.max_end;
 
+	sis->src_new_packet_count = original_cm->rx_packet_count;
+	sis->src_new_byte_count = original_cm->rx_byte_count;
+	sis->dest_new_packet_count = reply_cm->rx_packet_count;
+	sis->dest_new_byte_count = reply_cm->rx_byte_count;
+
 	sfe_ipv4_connection_match_update_summary_stats(original_cm);
 	sfe_ipv4_connection_match_update_summary_stats(reply_cm);
 
+	sis->src_dev = original_cm->match_dev;
 	sis->src_packet_count = original_cm->rx_packet_count64;
 	sis->src_byte_count = original_cm->rx_byte_count64;
+
+	sis->dest_dev = reply_cm->match_dev;
 	sis->dest_packet_count = reply_cm->rx_packet_count64;
 	sis->dest_byte_count = reply_cm->rx_byte_count64;
 

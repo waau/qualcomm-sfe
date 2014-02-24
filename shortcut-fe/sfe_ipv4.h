@@ -65,6 +65,8 @@ struct sfe_ipv4_destroy {
  * 'src' is the creator of the connection.
  */
 struct sfe_ipv4_sync {
+	struct net_device *src_dev;
+	struct net_device *dest_dev;
 	int protocol;			/* IP protocol number (IPPROTO_...) */
 	__be32 src_ip;			/* Non-NAT source address, i.e. the creator of the connection */
 	__be16 src_port;		/* Non-NAT source port */
@@ -75,11 +77,15 @@ struct sfe_ipv4_sync {
 	uint32_t src_td_max_end;
 	uint64_t src_packet_count;
 	uint64_t src_byte_count;
+	uint32_t src_new_packet_count;
+	uint32_t src_new_byte_count;
 	uint32_t dest_td_max_window;
 	uint32_t dest_td_end;
 	uint32_t dest_td_max_end;
 	uint64_t dest_packet_count;
 	uint64_t dest_byte_count;
+	uint32_t dest_new_packet_count;
+	uint32_t dest_new_byte_count;
 	uint64_t delta_jiffies;		/* Time to be added to the current timeout to keep the connection alive */
 };
 

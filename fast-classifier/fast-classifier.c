@@ -107,6 +107,22 @@ extern int (*athrs_fast_nat_recv)(struct sk_buff *skb);
  */
 extern int nf_ct_tcp_no_window_check;
 
+#if (SFE_HOOK_ABOVE_BRIDGE)
+/*
+ * Accelerate incoming packets destined for bridge device
+ * 	If a incoming packet is ultimatly destined for
+ * 	a bridge device we will first see the packet coming
+ * 	from the phyiscal device, we can skip straight to
+ * 	processing the packet like it came from the bridge
+ * 	for some more performance gains
+ *
+ * 	This only works when the hook is above the bridge. We
+ * 	only implement ingress for now, because for egress we
+ * 	want to have the bridge devices qdiscs be used.
+ */
+static bool skip_to_bridge_ingress = 0;
+#endif
+
 /*
  * fast_classifier_recv()
  *	Handle packet receives.
@@ -130,6 +146,14 @@ int fast_classifier_recv(struct sk_buff *skb)
 	dev = skb->dev;
 
 #if (SFE_HOOK_ABOVE_BRIDGE)
+	/*
+	 * Process packet like it arrived on the bridge device
+	 */
+	if (skip_to_bridge_ingress &&
+	   (dev->priv_flags & IFF_BRIDGE_PORT)) {
+		dev = dev->master;
+	}
+
 	/*
 	 * Does our input device support IP processing?
 	 */
@@ -1009,6 +1033,34 @@ static void fast_classifier_sync_rule(struct sfe_ipv4_sync *sis)
 		    (int)tuple.dst.protonum,
 		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
 		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
+
+#if (SFE_HOOK_ABOVE_BRIDGE)
+	/*
+	 * Update packet count for ingress on bridge device
+	 */
+	if (skip_to_bridge_ingress) {
+		struct rtnl_link_stats64 nlstats;
+		nlstats.tx_packets = 0;
+		nlstats.tx_bytes = 0;
+
+		if (sis->src_dev && IFF_EBRIDGE &&
+			(sis->src_new_packet_count || sis->src_new_byte_count)) {
+			nlstats.rx_packets = sis->src_new_packet_count;
+			nlstats.rx_bytes = sis->src_new_byte_count;
+			spin_lock_bh(&sfe_connections_lock);
+			br_dev_update_stats(sis->src_dev, &nlstats);
+			spin_unlock_bh(&sfe_connections_lock);
+		}
+		if (sis->dest_dev && IFF_EBRIDGE &&
+			(sis->dest_new_packet_count || sis->dest_new_byte_count)) {
+			nlstats.rx_packets = sis->dest_new_packet_count;
+			nlstats.rx_bytes = sis->dest_new_byte_count;
+			spin_lock_bh(&sfe_connections_lock);
+			br_dev_update_stats(sis->dest_dev, &nlstats);
+			spin_unlock_bh(&sfe_connections_lock);
+		}
+	}
+#endif
 
 	/*
 	 * Look up conntrack connection

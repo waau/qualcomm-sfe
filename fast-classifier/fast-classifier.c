@@ -1217,12 +1217,42 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 }
 
 /*
+ * fast_classifier_get_skip_bridge_ingress()
+ */
+static ssize_t fast_classifier_get_skip_bridge_ingress(struct device *dev,
+				      struct device_attribute *attr,
+				      char *buf)
+{
+	return sprintf(buf, "%d\n", skip_to_bridge_ingress);
+}
+
+/*
+ * fast_classifier_set_skip_bridge_ingress()
+ */
+static ssize_t fast_classifier_set_skip_bridge_ingress(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t size)
+{
+	long new;
+	int ret;
+
+	ret = strict_strtol(buf, 0, &new);
+	if (ret == -EINVAL || ((int)new != new))
+		return -EINVAL;
+
+	skip_to_bridge_ingress = new ? 1 : 0;
+
+	return size;
+}
+/*
  * sysfs attributes.
  */
 static const struct device_attribute fast_classifier_offload_at_pkts_attr =
 	__ATTR(offload_at_pkts, S_IWUGO | S_IRUGO, fast_classifier_get_offload_at_pkts, fast_classifier_set_offload_at_pkts);
 static const struct device_attribute fast_classifier_debug_info_attr =
 	__ATTR(debug_info, S_IRUGO, fast_classifier_get_debug_info, NULL);
+static const struct device_attribute fast_classifier_skip_bridge_ingress =
+	__ATTR(skip_to_bridge_ingress, S_IWUGO | S_IRUGO, fast_classifier_get_skip_bridge_ingress, fast_classifier_set_skip_bridge_ingress);
 
 /*
  * fast_classifier_init()
@@ -1246,17 +1276,24 @@ static int __init fast_classifier_init(void)
 
 	result = sysfs_create_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
 	if (result) {
-		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
+		DEBUG_ERROR("failed to register offload at pkgs: %d\n", result);
 		goto exit2;
 	}
 
 	result = sysfs_create_file(sc->sys_fast_classifier, &fast_classifier_debug_info_attr.attr);
 	if (result) {
-		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
+		DEBUG_ERROR("failed to register debug dev: %d\n", result);
 		sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
 		goto exit2;
 	}
 
+	result = sysfs_create_file(sc->sys_fast_classifier, &fast_classifier_skip_bridge_ingress.attr);
+	if (result) {
+		DEBUG_ERROR("failed to register skip bridge on ingress: %d\n", result);
+		sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
+		sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_debug_info_attr.attr);
+		goto exit2;
+	}
 	sc->dev_notifier.notifier_call = fast_classifier_device_event;
 	sc->dev_notifier.priority = 1;
 	register_netdevice_notifier(&sc->dev_notifier);
@@ -1327,9 +1364,9 @@ exit6:
 exit5:
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &fast_classifier_conntrack_notifier);
-#endif
 
 exit4:
+#endif
 	nf_unregister_hooks(fast_classifier_ipv4_ops_post_routing, ARRAY_SIZE(fast_classifier_ipv4_ops_post_routing));
 
 exit3:
@@ -1337,6 +1374,7 @@ exit3:
 	unregister_netdevice_notifier(&sc->dev_notifier);
 	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_offload_at_pkts_attr.attr);
 	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_debug_info_attr.attr);
+	sysfs_remove_file(sc->sys_fast_classifier, &fast_classifier_skip_bridge_ingress.attr);
 
 exit2:
 	kobject_put(sc->sys_fast_classifier);

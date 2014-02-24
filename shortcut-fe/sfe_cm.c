@@ -18,6 +18,7 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
+#include <linux/if_bridge.h>
 
 #include "sfe.h"
 #include "sfe_ipv4.h"

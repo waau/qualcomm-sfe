@@ -21,6 +21,7 @@
 #include <net/genetlink.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
+#include <linux/if_bridge.h>
 
 #include "../shortcut-fe/sfe.h"
 #include "../shortcut-fe/sfe_ipv4.h"

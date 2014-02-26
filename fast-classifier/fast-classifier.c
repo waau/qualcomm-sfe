@@ -705,7 +705,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	}
 	sic.mark = skb->mark;
 
-	conn = kmalloc(sizeof(struct sfe_connection), GFP_KERNEL);
+	conn = kmalloc(sizeof(struct sfe_connection), GFP_ATOMIC);
 	if (conn == NULL) {
 		printk(KERN_CRIT "ERROR: no memory for sfe\n");
 		goto done3;
@@ -716,7 +716,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	memcpy(conn->smac, sic.src_mac, ETH_ALEN);
 	memcpy(conn->dmac, sic.dest_mac_xlate, ETH_ALEN);
 
-	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_KERNEL);
+	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_ATOMIC);
 	if (p_sic == NULL) {
 		printk(KERN_CRIT "ERROR: no memory for sfe\n");
 		kfree(conn);

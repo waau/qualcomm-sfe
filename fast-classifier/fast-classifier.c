@@ -377,15 +377,15 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 	list_for_each_entry(conn, &sfe_connections, list) {
 		p_sic = conn->sic;
 
-		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d...",
-				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
-				p_sic->src_port, p_sic->dest_port);
+		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip_xlate: %d, src_port: %d, dst_port_xlate: %d...",
+				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip_xlate,
+				p_sic->src_port, p_sic->dest_port_xlate);
 
 		if (p_sic->protocol == fc_msg->proto &&
 		    p_sic->src_port == fc_msg->sport &&
-		    p_sic->dest_port == fc_msg->dport &&
+		    p_sic->dest_port_xlate == fc_msg->dport &&
 		    p_sic->src_ip == fc_msg->src_saddr &&
-		    p_sic->dest_ip == fc_msg->dst_saddr ) {
+		    p_sic->dest_ip_xlate == fc_msg->dst_saddr ) {
 			if (conn->offloaded == 0) {
 				DEBUG_TRACE("USERSPACE OFFLOAD REQUEST, MATCH FOUND, WILL OFFLOAD\n");
 				if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
@@ -584,9 +584,9 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 						conn->offloaded = 1;
 						fc_msg.proto = sic.protocol;
 						fc_msg.src_saddr = sic.src_ip;
-						fc_msg.dst_saddr = sic.dest_ip;
+						fc_msg.dst_saddr = sic.dest_ip_xlate;
 						fc_msg.sport = sic.src_port;
-						fc_msg.dport = sic.dest_port;
+						fc_msg.dport = sic.dest_port_xlate;
 						memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
 						memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
 						fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, &fc_msg);
@@ -915,9 +915,9 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 		    p_sic->dest_ip == sid.dest_ip ) {
 			fc_msg.proto = p_sic->protocol;
 			fc_msg.src_saddr = p_sic->src_ip;
-			fc_msg.dst_saddr = p_sic->dest_ip;
+			fc_msg.dst_saddr = p_sic->dest_ip_xlate;
 			fc_msg.sport = p_sic->src_port;
-			fc_msg.dport = p_sic->dest_port;
+			fc_msg.dport = p_sic->dest_port_xlate;
 			memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
 			memcpy(fc_msg.dmac, conn->dmac, ETH_ALEN);
 			sfe_found_match = 1;

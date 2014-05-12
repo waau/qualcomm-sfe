@@ -19,9 +19,9 @@
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/genetlink.h>
-#include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/if_bridge.h>
+#include <linux/hashtable.h>
 
 #include "../shortcut-fe/sfe.h"
 #include "../shortcut-fe/sfe_ipv4.h"
@@ -258,7 +258,7 @@ static bool fast_classifier_find_dev_and_mac_addr(uint32_t addr, struct net_devi
 static DEFINE_SPINLOCK(sfe_connections_lock);
 
 struct sfe_connection {
-	struct list_head list;
+	struct hlist_node hl;
 	struct sfe_ipv4_create *sic;
 	struct nf_conn *ct;
 	int hits;
@@ -268,7 +268,15 @@ struct sfe_connection {
 };
 static int sfe_connections_size = 0;
 
-static LIST_HEAD(sfe_connections);
+#define FC_CONN_HASH_ORDER 13
+static DEFINE_HASHTABLE(fc_conn_ht, FC_CONN_HASH_ORDER);
+
+static u32 fc_conn_hash (unsigned long src_saddr, unsigned long dst_saddr,
+		unsigned short sport, unsigned short dport)
+{
+	return (src_saddr ^ dst_saddr ^
+		(sport | (dport << 16)));
+}
 
 /*
  * fast_classifier_update_protocol()
@@ -385,6 +393,8 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 	struct sfe_ipv4_create *p_sic;
 	struct sfe_connection *conn;
 	unsigned long flags;
+	u32 key;
+	struct hlist_node *node;
 
 	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
@@ -397,8 +407,11 @@ static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_inf
 			fc_msg->smac,
 			fc_msg->dmac);
 
+	key = fc_conn_hash(fc_msg->src_saddr, fc_msg->dst_saddr,
+				fc_msg->sport, fc_msg->dport);
+
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	list_for_each_entry(conn, &sfe_connections, list) {
+	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 
 		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip_xlate: %d, src_port: %d, dst_port_xlate: %d...",
@@ -468,6 +481,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	struct nf_conntrack_tuple reply_tuple;
 	struct sfe_connection *conn;
 	unsigned long flags;
+	u32 key;
+	struct hlist_node *node;
 
 	/*
 	 * Don't process broadcast or multicast packets.
@@ -579,7 +594,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			sic.protocol, sic.src_ip, sic.dest_ip,
 			sic.src_port, sic.dest_port);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	list_for_each_entry(conn, &sfe_connections, list) {
+	key = fc_conn_hash(sic.src_ip, sic.dest_ip, sic.src_port, sic.dest_port);
+	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE("\t\t-> COMPARING: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d...",
 				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
@@ -756,7 +772,11 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
 			p_sic->src_port, p_sic->dest_port);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	list_add_tail(&(conn->list), &sfe_connections);
+	key = fc_conn_hash(conn->sic->src_ip,
+			   conn->sic->dest_ip,
+			   conn->sic->src_port,
+			   conn->sic->dest_port);
+	hash_add(fc_conn_ht, conn, key);
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
 
 	/*
@@ -789,9 +809,12 @@ static void fast_classifier_update_mark(struct sfe_ipv4_mark *mark)
 	struct sfe_connection *conn;
 	struct sfe_ipv4_create *p_sic;
 	unsigned long flags;
+	u32 key;
+	struct hlist_node *node;
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	list_for_each_entry(conn, &sfe_connections, list) {
+	key = fc_conn_hash(mark->src_ip, mark->dest_ip, mark->src_port,  mark->dest_port);
+	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		if (p_sic->protocol == mark->protocol &&
 		    p_sic->src_port == mark->src_port &&
@@ -831,6 +854,8 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	unsigned long flags;
 	struct fast_classifier_tuple fc_msg;
 	int offloaded = 0;
+	u32 key;
+	struct hlist_node *node;
 
 	/*
 	 * If we don't have a conntrack entry then we're done.
@@ -926,7 +951,9 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 			sid.protocol, sid.src_ip, sid.dest_ip,
 			sid.src_port, sid.dest_port);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	list_for_each_entry(conn, &sfe_connections, list) {
+
+	key = fc_conn_hash(sid.src_ip, sid.dest_ip, sid.src_port, sid.dest_port);
+	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d...",
 				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
@@ -957,7 +984,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
 				p_sic->src_port, p_sic->dest_port);
 		kfree(conn->sic);
-		list_del(&(conn->list));
+		hash_del(&conn->hl);
 		sfe_connections_size--;
 		kfree(conn);
 	} else {
@@ -1188,6 +1215,8 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 	size_t len = 0;
 	unsigned long flags;
 	struct sfe_connection *conn;
+	u32 i;
+	struct hlist_node *node;
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 	len += scnprintf(buf, PAGE_SIZE - len, "size=%d offload=%d offload_no_match=%d"
@@ -1197,7 +1226,7 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 			atomic_read(&offload_no_match_msgs),
 			atomic_read(&offloaded_msgs),
 			atomic_read(&done_msgs));
-	list_for_each_entry(conn, &sfe_connections, list) {
+	hash_for_each(fc_conn_ht, i, node, conn, hl) {
 		len += scnprintf(buf + len , PAGE_SIZE - len,
 				"o=%d, p=%d [%pM]:%pI4:%u %pI4:%u:[%pM] m=%08x h=%d\n",
 				conn->offloaded,
@@ -1264,6 +1293,8 @@ static int __init fast_classifier_init(void)
 
 	printk(KERN_ALERT "fast-classifier: starting up\n");
 	DEBUG_INFO("SFE CM init\n");
+
+	hash_init(fc_conn_ht);
 
 	/*
 	 * Create sys/fast_classifier

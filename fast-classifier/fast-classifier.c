@@ -194,7 +194,7 @@ int fast_classifier_recv(struct sk_buff *skb)
  * structure, obtain the hardware address.  This means this function also
  * works if the neighbours are routers too.
  */
-static bool fast_classifier_find_dev_and_mac_addr(uint32_t daddr, uint32_t saddr, struct net_device **dev, uint8_t *mac_addr)
+static bool fast_classifier_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev, uint8_t *mac_addr)
 {
 	struct neighbour *neigh;
 	struct rtable *rt;
@@ -206,7 +206,7 @@ static bool fast_classifier_find_dev_and_mac_addr(uint32_t daddr, uint32_t saddr
 	 * address from its neighbour structure.  This means this work when the
 	 * neighbours are routers too.
 	 */
-	rt = ip_route_output(&init_net, daddr, saddr, 0, 0);
+	rt = ip_route_output(&init_net, addr, 0, 0, 0);
 	if (unlikely(IS_ERR(rt))) {
 		return false;
 	}
@@ -658,26 +658,26 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	 * Get the net device and MAC addresses that correspond to the various source and
 	 * destination host addresses.
 	 */
-	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip, 0, &src_dev, sic.src_mac)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip, &src_dev, sic.src_mac)) {
 		DEBUG_TRACE("failed to find MAC address for src IP: %pI4\n", &sic.src_ip);
 		return NF_ACCEPT;
 	}
 
-	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip_xlate, 0, &dev, sic.src_mac_xlate)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip_xlate, &dev, sic.src_mac_xlate)) {
 		DEBUG_TRACE("failed to find MAC address for xlate src IP: %pI4\n", &sic.src_ip_xlate);
 		goto done1;
 	}
 
 	dev_put(dev);
 
-	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip, 0, &dev, sic.dest_mac)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip, &dev, sic.dest_mac)) {
 		DEBUG_TRACE("failed to find MAC address for dest IP: %pI4\n", &sic.dest_ip);
 		goto done1;
 	}
 
 	dev_put(dev);
 
-	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip_xlate, sic.src_ip_xlate, &dest_dev, sic.dest_mac_xlate)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip_xlate, &dest_dev, sic.dest_mac_xlate)) {
 		DEBUG_TRACE("failed to find MAC address for xlate dest IP: %pI4\n", &sic.dest_ip_xlate);
 		goto done1;
 	}

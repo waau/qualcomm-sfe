@@ -265,6 +265,11 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	sic.src_ip = (__be32)orig_tuple.src.u3.ip;
 	sic.dest_ip = (__be32)orig_tuple.dst.u3.ip;
 
+	if (ipv4_is_multicast(sic.src_ip) || ipv4_is_multicast(sic.dest_ip)) {
+		DEBUG_TRACE("multicast address\n");
+		return NF_ACCEPT;
+	}
+
 	/*
 	 * NAT'ed addresses - note these are as seen from the 'reply' direction
 	 * When NAT does not apply to this connection these will be identical to the above.

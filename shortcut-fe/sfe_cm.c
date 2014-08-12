@@ -166,16 +166,6 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
 
 	dst_release(dst);
 
-	/*
-	 * We're only interested in unicast MAC addresses - if it's not a unicast
-	 * address then our IP address mustn't be unicast either.
-	 */
-	if (is_multicast_ether_addr(mac_addr)) {
-		DEBUG_TRACE("MAC is non-unicast - ignoring\n");
-		dev_put(mac_dev);
-		return false;
-	}
-
 	return true;
 }
 

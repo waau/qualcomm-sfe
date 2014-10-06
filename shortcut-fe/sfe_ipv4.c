@@ -2262,6 +2262,11 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	dest_dev = sic->dest_dev;
 	src_dev = sic->src_dev;
 
+	if (unlikely((dest_dev->reg_state != NETREG_REGISTERED) ||
+		     (src_dev->reg_state != NETREG_REGISTERED))) {
+		return -EINVAL;
+	}
+
 	spin_lock_bh(&si->lock);
 	si->connection_create_requests++;
 

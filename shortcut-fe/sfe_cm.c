@@ -22,6 +22,7 @@
 
 #include "sfe.h"
 #include "sfe_ipv4.h"
+#include "sfe_backport.h"
 
 /*
  * Per-module structure.
@@ -138,7 +139,7 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
 	dst = (struct dst_entry *)rt;
 
 	rcu_read_lock();
-	neigh = dst_get_neighbour_noref(dst);
+	neigh = dst_neigh_lookup(dst, &addr);
 	if (unlikely(!neigh)) {
 		rcu_read_unlock();
 		dst_release(dst);
@@ -146,6 +147,7 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
 	}
 
 	if (unlikely(!(neigh->nud_state & NUD_VALID))) {
+		neigh_release(neigh);
 		rcu_read_unlock();
 		dst_release(dst);
 		return false;
@@ -153,6 +155,7 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
 
 	mac_dev = neigh->dev;
 	if (!mac_dev) {
+		neigh_release(neigh);
 		rcu_read_unlock();
 		dst_release(dst);
 		return false;
@@ -162,8 +165,8 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
 
 	dev_hold(mac_dev);
 	*dev = mac_dev;
+	neigh_release(neigh);
 	rcu_read_unlock();
-
 	dst_release(dst);
 
 	return true;
@@ -173,11 +176,7 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
  * sfe_cm_ipv4_post_routing_hook()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
  */
-static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
-						  struct sk_buff *skb,
-						  const struct net_device *in_unused,
-						  const struct net_device *out,
-						  int (*okfn)(struct sk_buff *))
+sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 {
 	struct sfe_ipv4_create sic;
 	struct net_device *in;
@@ -383,7 +382,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	 * the case then find the bridge interface instead.
 	 */
 	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
-		src_br_dev = src_dev->master;
+		src_br_dev = SFE_DEV_MASTER(src_dev);
 		if (!src_br_dev) {
 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
 			goto done2;
@@ -394,7 +393,7 @@ static unsigned int sfe_cm_ipv4_post_routing_hook(unsigned int hooknum,
 	}
 
 	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
-		dest_br_dev = dest_dev->master;
+		dest_br_dev = SFE_DEV_MASTER(dest_dev);
 		if (!dest_br_dev) {
 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
 			goto done3;
@@ -539,7 +538,7 @@ static struct nf_ct_event_notifier sfe_cm_conntrack_notifier = {
  */
 static struct nf_hook_ops sfe_cm_ipv4_ops_post_routing[] __read_mostly = {
 	{
-		.hook = sfe_cm_ipv4_post_routing_hook,
+		.hook = __sfe_cm_ipv4_post_routing_hook,
 		.owner = THIS_MODULE,
 		.pf = PF_INET,
 		.hooknum = NF_INET_POST_ROUTING,
@@ -556,7 +555,7 @@ static void sfe_cm_sync_rule(struct sfe_ipv4_sync *sis)
 	struct nf_conntrack_tuple_hash *h;
 	struct nf_conntrack_tuple tuple;
 	struct nf_conn *ct;
-	struct nf_conn_counter *acct;
+	SFE_NF_CONN_ACCT(acct);
 
 	/*
 	 * Create a tuple so as to be able to look up a connection
@@ -598,10 +597,10 @@ static void sfe_cm_sync_rule(struct sfe_ipv4_sync *sis)
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
 		spin_lock_bh(&ct->lock);
-		atomic64_set(&acct[IP_CT_DIR_ORIGINAL].packets, sis->src_packet_count);
-		atomic64_set(&acct[IP_CT_DIR_ORIGINAL].bytes, sis->src_byte_count);
-		atomic64_set(&acct[IP_CT_DIR_REPLY].packets, sis->dest_packet_count);
-		atomic64_set(&acct[IP_CT_DIR_REPLY].bytes, sis->dest_byte_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].packets, sis->src_packet_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].bytes, sis->src_byte_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].packets, sis->dest_packet_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].bytes, sis->dest_byte_count);
 		spin_unlock_bh(&ct->lock);
 	}
 

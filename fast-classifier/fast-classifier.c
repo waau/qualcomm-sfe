@@ -325,7 +325,8 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 	int rc;
 	void *msg_head;
 
-	skb = nlmsg_new(NLMSG_GOODSIZE, GFP_ATOMIC);
+	skb = genlmsg_new(sizeof(*fc_msg) + fast_classifier_gnl_family.hdrsize,
+			  GFP_ATOMIC);
 	if (skb == NULL)
 		return;
 

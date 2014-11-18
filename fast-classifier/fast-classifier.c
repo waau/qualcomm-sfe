@@ -772,7 +772,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			   conn->sic->dest_ip,
 			   conn->sic->src_port,
 			   conn->sic->dest_port);
-	hash_add(fc_conn_ht, conn, key);
+	hash_add(fc_conn_ht, &conn->hl, key);
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
 
 	/*

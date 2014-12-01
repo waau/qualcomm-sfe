@@ -384,74 +384,128 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 }
 
 /*
+ * __fast_classifier_find_conn()
+ * 	find a connection object in the hash table
+ *      @pre the sfe_connection_lock must be held before calling this function
+ */
+static struct sfe_connection *
+__fast_classifier_find_conn(u32 key,
+			    unsigned char proto,
+			    unsigned long saddr,
+			    unsigned long daddr,
+			    unsigned short sport,
+			    unsigned short dport)
+{
+	struct sfe_ipv4_create *p_sic;
+	struct sfe_connection *conn;
+	struct hlist_node *node;
+
+	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+		p_sic = conn->sic;
+		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %pI4 dst_ip_xlate: %pI4, src_port: %d, dst_port_xlate: %d\n",
+			    p_sic->protocol,
+			    &(p_sic->src_ip),
+			    &(p_sic->dest_ip_xlate),
+			    p_sic->src_port,
+			    p_sic->dest_port_xlate);
+		if (p_sic->protocol == proto &&
+		    p_sic->src_port == sport &&
+		    p_sic->dest_port_xlate == dport &&
+		    p_sic->src_ip == saddr &&
+		    p_sic->dest_ip_xlate == daddr ) {
+			return conn;
+		}
+	}
+
+	DEBUG_TRACE("connection not found\n");
+	return NULL;
+}
+
+/*
  * fast_classifier_offload_genl_msg()
  * 	Called from user space to offload a connection
  */
-static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
+static int
+fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 {
 	int ret;
+	u32 key;
 	struct nlattr *na;
 	struct fast_classifier_tuple *fc_msg;
-	struct sfe_ipv4_create *p_sic;
 	struct sfe_connection *conn;
 	unsigned long flags;
-	u32 key;
-	struct hlist_node *node;
 
 	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
 
-	DEBUG_TRACE("INFO: want to offload: %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
-			fc_msg->proto,
-			&(fc_msg->src_saddr),
-			&(fc_msg->dst_saddr),
-			fc_msg->sport, fc_msg->dport,
-			fc_msg->smac,
-			fc_msg->dmac);
+	key = fc_conn_hash(fc_msg->src_saddr,
+			   fc_msg->dst_saddr,
+			   fc_msg->sport,
+			   fc_msg->dport);
 
-	key = fc_conn_hash(fc_msg->src_saddr, fc_msg->dst_saddr,
-				fc_msg->sport, fc_msg->dport);
+	DEBUG_TRACE("want to offload: key=%u, %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
+		    key,
+		    fc_msg->proto,
+		    &(fc_msg->src_saddr),
+		    &(fc_msg->dst_saddr),
+		    fc_msg->sport,
+		    fc_msg->dport,
+		    fc_msg->smac,
+		    fc_msg->dmac);
+
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
-		p_sic = conn->sic;
-
-		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip_xlate: %d, src_port: %d, dst_port_xlate: %d...",
-				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip_xlate,
-				p_sic->src_port, p_sic->dest_port_xlate);
-
-		if (p_sic->protocol == fc_msg->proto &&
-		    p_sic->src_port == fc_msg->sport &&
-		    p_sic->dest_port_xlate == fc_msg->dport &&
-		    p_sic->src_ip == fc_msg->src_saddr &&
-		    p_sic->dest_ip_xlate == fc_msg->dst_saddr ) {
-			if (conn->offloaded == 0) {
-				DEBUG_TRACE("USERSPACE OFFLOAD REQUEST, MATCH FOUND, WILL OFFLOAD\n");
-				if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
-					spin_unlock_irqrestore(&sfe_connections_lock, flags);
-					DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
-					return 0;
-				}
-				DEBUG_TRACE("INFO: calling sfe rule creation!\n");
-				spin_unlock_irqrestore(&sfe_connections_lock, flags);
-				ret = sfe_ipv4_create_rule(p_sic);
-				if ((ret == 0) || (ret == -EADDRINUSE)) {
-					conn->offloaded = 1;
-					fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED, fc_msg);
-				}
-				atomic_inc(&offload_msgs);
-				return 0;
-			}
-			/* conn->offloaded != 0 */
-			DEBUG_TRACE("GOT REQUEST TO OFFLOAD ALREADY OFFLOADED CONN FROM USERSPACE\n");
+	conn = __fast_classifier_find_conn(key,
+					   fc_msg->proto,
+					   fc_msg->src_saddr,
+					   fc_msg->dst_saddr,
+					   fc_msg->sport,
+					   fc_msg->dport);
+	if (conn == NULL) {
+		/* reverse the tuple and try again */
+		key = fc_conn_hash(fc_msg->dst_saddr,
+				   fc_msg->src_saddr,
+				   fc_msg->dport,
+				   fc_msg->sport);
+		DEBUG_TRACE("conn not found, reversing tuple. new key: %u\n",
+			    key);
+		conn = __fast_classifier_find_conn(key,
+						   fc_msg->proto,
+						   fc_msg->dst_saddr,
+						   fc_msg->src_saddr,
+						   fc_msg->dport,
+						   fc_msg->sport);
+		if (conn == NULL) {
 			spin_unlock_irqrestore(&sfe_connections_lock, flags);
+			DEBUG_TRACE("REQUEST OFFLOAD NO MATCH\n");
+			atomic_inc(&offload_no_match_msgs);
 			return 0;
 		}
-		DEBUG_TRACE("SEARCH CONTINUES\n");
 	}
 
+	if (conn->offloaded != 0) {
+		spin_unlock_irqrestore(&sfe_connections_lock, flags);
+		DEBUG_TRACE("GOT REQUEST TO OFFLOAD ALREADY OFFLOADED CONN FROM USERSPACE\n");
+		return 0;
+	}
+
+	DEBUG_TRACE("USERSPACE OFFLOAD REQUEST, MATCH FOUND, WILL OFFLOAD\n");
+	if (fast_classifier_update_protocol(conn->sic, conn->ct) == 0) {
+		spin_unlock_irqrestore(&sfe_connections_lock, flags);
+		DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
+		return 0;
+	}
+
+	DEBUG_TRACE("INFO: calling sfe rule creation!\n");
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
-	atomic_inc(&offload_no_match_msgs);
+	ret = sfe_ipv4_create_rule(conn->sic);
+	if ((ret == 0) || (ret == -EADDRINUSE)) {
+		conn->offloaded = 1;
+		fast_classifier_send_genl_msg(FAST_CLASSIFIER_C_OFFLOADED,
+					      fc_msg);
+	}
+
+	atomic_inc(&offload_msgs);
 	return 0;
 }
 
@@ -604,7 +658,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	key = fc_conn_hash(sic.src_ip, sic.dest_ip, sic.src_port, sic.dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
-		DEBUG_TRACE("\t\t-> COMPARING: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d...",
+		DEBUG_TRACE("\t\t-> COMPARING: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d...",
 				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
 				p_sic->src_port, p_sic->dest_port);
 
@@ -775,9 +829,6 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	conn->ct = ct;
 	sfe_connections_size++;
 	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", sfe_connections_size);
-	DEBUG_TRACE("POST_ROUTE: new offloadable connection: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
-			p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
-			p_sic->src_port, p_sic->dest_port);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 	key = fc_conn_hash(conn->sic->src_ip,
 			   conn->sic->dest_ip,
@@ -785,7 +836,9 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			   conn->sic->dest_port);
 	hash_add(fc_conn_ht, &conn->hl, key);
 	spin_unlock_irqrestore(&sfe_connections_lock, flags);
-
+	DEBUG_TRACE("new offloadable: key: %u, %d sip: %pI4 dip: %pI4, sport: %d, dport: %d\n",
+		    key, p_sic->protocol, &(p_sic->src_ip), &(p_sic->dest_ip),
+		    p_sic->src_port, p_sic->dest_port);
 	/*
 	 * If we had bridge ports then release them too.
 	 */
@@ -962,8 +1015,8 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	key = fc_conn_hash(sid.src_ip, sid.dest_ip, sid.src_port, sid.dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
-		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d...",
-				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
+		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d...",
+				p_sic->protocol, &(p_sic->src_ip), &(p_sic->dest_ip),
 				p_sic->src_port, p_sic->dest_port);
 
 		if (p_sic->protocol == sid.protocol &&

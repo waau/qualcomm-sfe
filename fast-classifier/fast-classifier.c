@@ -97,6 +97,10 @@ atomic_t offload_msgs = ATOMIC_INIT(0);
 atomic_t offload_no_match_msgs = ATOMIC_INIT(0);
 atomic_t offloaded_msgs = ATOMIC_INIT(0);
 atomic_t done_msgs = ATOMIC_INIT(0);
+
+atomic_t offloaded_fail_msgs = ATOMIC_INIT(0);
+atomic_t done_fail_msgs = ATOMIC_INIT(0);
+
 /*
  * Expose the hook for the receive processing.
  */
@@ -349,8 +353,27 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 		nlmsg_free(skb);
 		return;
 	}
-	genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp.id, GFP_ATOMIC);
 
+	rc = genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp.id, GFP_ATOMIC);
+	switch (msg) {
+		case FAST_CLASSIFIER_C_OFFLOADED:
+			if (rc == 0) {
+				atomic_inc(&offloaded_msgs);
+			} else {
+				atomic_inc(&offloaded_fail_msgs);
+			}
+			break;
+		case FAST_CLASSIFIER_C_DONE:
+			if (rc == 0) {
+				atomic_inc(&done_msgs);
+			} else {
+				atomic_inc(&done_fail_msgs);
+			}
+			break;
+		default:
+			DEBUG_ERROR("fast-classifer: Unknown message type sent!\n");
+			break;
+	}
 	DEBUG_TRACE("INFO: %d : %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
 			msg, fc_msg->proto,
 			&(fc_msg->src_saddr),
@@ -358,18 +381,6 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 			fc_msg->sport, fc_msg->dport,
 			fc_msg->smac,
 			fc_msg->dmac);
-
-	switch (msg) {
-		case FAST_CLASSIFIER_C_OFFLOADED:
-			atomic_inc(&offloaded_msgs);
-			break;
-		case FAST_CLASSIFIER_C_DONE:
-			atomic_inc(&done_msgs);
-			break;
-		default:
-			DEBUG_ERROR("fast-classifer: Unknown message type sent!\n");
-			break;
-	}
 }
 
 /*
@@ -1216,12 +1227,14 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 	len += scnprintf(buf, PAGE_SIZE - len, "size=%d offload=%d offload_no_match=%d"
-			" offloaded=%d done=%d\n",
+			" offloaded=%d done=%d offloaded_fail=%d done_fail=%d\n",
 			sfe_connections_size,
 			atomic_read(&offload_msgs),
 			atomic_read(&offload_no_match_msgs),
 			atomic_read(&offloaded_msgs),
-			atomic_read(&done_msgs));
+			atomic_read(&done_msgs),
+			atomic_read(&offloaded_fail_msgs),
+			atomic_read(&done_fail_msgs));
 	hash_for_each(fc_conn_ht, i, node, conn, hl) {
 		len += scnprintf(buf + len , PAGE_SIZE - len,
 				"o=%d, p=%d [%pM]:%pI4:%u %pI4:%u:[%pM] m=%08x h=%d\n",

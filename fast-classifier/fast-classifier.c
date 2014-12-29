@@ -669,7 +669,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		    p_sic->dest_ip == sic.dest_ip ) {
 			conn->hits++;
 			if (conn->offloaded == 0) {
-				if ((conn->hits >= offload_at_pkts) && conn->sic->mark == 0) {
+				if (conn->hits >= offload_at_pkts) {
 					struct fast_classifier_tuple fc_msg;
 					DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
 					if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
@@ -695,7 +695,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 
 					return NF_ACCEPT;
 				} else if (conn->hits > offload_at_pkts) {
-					DEBUG_TRACE("MORE THAN %d HITS AND NOT OFFLOADED\n", offload_at_pkts);
+					DEBUG_ERROR("ERROR: MORE THAN %d HITS AND NOT OFFLOADED\n", offload_at_pkts);
 					spin_unlock_irqrestore(&sfe_connections_lock, flags);
 					return NF_ACCEPT;
 				}

@@ -192,6 +192,9 @@ struct sfe_ipv4_connection_match {
 	 * Control the operations of the match.
 	 */
 	uint32_t flags;			/* Bit flags */
+#ifdef CONFIG_NF_FLOW_COOKIE
+	uint32_t flow_cookie;		/* used flow cookie, for debug */
+#endif
 
 	/*
 	 * Connection state that we track once we match.
@@ -272,6 +275,16 @@ struct sfe_ipv4_connection {
 #define SFE_IPV4_CONNECTION_HASH_SHIFT 12
 #define SFE_IPV4_CONNECTION_HASH_SIZE (1 << SFE_IPV4_CONNECTION_HASH_SHIFT)
 #define SFE_IPV4_CONNECTION_HASH_MASK (SFE_IPV4_CONNECTION_HASH_SIZE - 1)
+
+#ifdef CONFIG_NF_FLOW_COOKIE
+#define SFE_FLOW_COOKIE_SIZE 2048
+#define SFE_FLOW_COOKIE_MASK 0x7ff
+
+struct sfe_flow_cookie_entry {
+	struct sfe_ipv4_connection_match *match;
+	unsigned long last_clean_time;
+};
+#endif
 
 enum sfe_ipv4_exception_events {
 	SFE_IPV4_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE,
@@ -373,6 +386,12 @@ struct sfe_ipv4 {
 					/* Connection hash table */
 	struct sfe_ipv4_connection_match *conn_match_hash[SFE_IPV4_CONNECTION_HASH_SIZE];
 					/* Connection match hash table */
+#ifdef CONFIG_NF_FLOW_COOKIE
+	struct sfe_flow_cookie_entry sfe_flow_cookie_table[SFE_FLOW_COOKIE_SIZE];
+					/* flow cookie table*/
+	flow_cookie_set_func_t flow_cookie_set_func;
+					/* function used to configure flow cookie in hardware*/
+#endif
 
 	/*
 	 * Statistics.
@@ -709,6 +728,34 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 
 	cm->next = prev_head;
 	*hash_head = cm;
+
+#ifdef CONFIG_NF_FLOW_COOKIE
+	/*
+	 * Configure hardware to put a flow cookie in packet of this flow,
+	 * then we can accelerate the lookup process when we received this packet.
+	 */
+	for (conn_match_idx = 1; conn_match_idx < SFE_FLOW_COOKIE_SIZE; conn_match_idx++) {
+		struct sfe_flow_cookie_entry *entry = &si->sfe_flow_cookie_table[conn_match_idx];
+
+		if ((NULL == entry->match) && time_is_before_jiffies(entry->last_clean_time + HZ)) {
+			flow_cookie_set_func_t func;
+
+			rcu_read_lock();
+			func = rcu_dereference(si->flow_cookie_set_func);
+			if (func) {
+				if(!func(cm->match_protocol, cm->match_src_ip, cm->match_src_port,
+					 cm->match_dest_ip, cm->match_dest_port, conn_match_idx)) {
+					entry->match = cm;
+					cm->flow_cookie = conn_match_idx;
+				}
+			}
+			rcu_read_unlock();
+
+			break;
+		}
+	}
+#endif
+
 }
 
 /*
@@ -719,6 +766,34 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
  */
 static inline void sfe_ipv4_remove_sfe_ipv4_connection_match(struct sfe_ipv4 *si, struct sfe_ipv4_connection_match *cm)
 {
+#ifdef CONFIG_NF_FLOW_COOKIE
+	/*
+	 * Tell hardware that we no longer need a flow cookie in packet of this flow
+	 */
+	unsigned int conn_match_idx;
+
+	for (conn_match_idx = 1; conn_match_idx < SFE_FLOW_COOKIE_SIZE; conn_match_idx++) {
+		struct sfe_flow_cookie_entry *entry = &si->sfe_flow_cookie_table[conn_match_idx];
+
+		if (cm == entry->match) {
+			flow_cookie_set_func_t func;
+
+			rcu_read_lock();
+			func = rcu_dereference(si->flow_cookie_set_func);
+			if (func) {
+				func(cm->match_protocol, cm->match_src_ip, cm->match_src_port,
+				     cm->match_dest_ip, cm->match_dest_port, 0);
+			}
+			rcu_read_unlock();
+
+			cm->flow_cookie = 0;
+			entry->match = NULL;
+			entry->last_clean_time = jiffies;
+			break;
+		}
+	}
+#endif
+
 	/*
 	 * Unlink the connection match entry from the hash.
 	 */
@@ -1143,7 +1218,14 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Look for a connection match.
 	 */
+#ifdef CONFIG_NF_FLOW_COOKIE
+	cm = si->sfe_flow_cookie_table[skb->flow_cookie & SFE_FLOW_COOKIE_MASK].match;
+	if (unlikely(!cm)) {
+		cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
+	}
+#else
 	cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
+#endif
 	if (unlikely(!cm)) {
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_UDP_NO_CONNECTION]++;
 		si->packets_not_forwarded++;
@@ -1465,7 +1547,14 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Look for a connection match.
 	 */
-	cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_TCP, src_ip, src_port, dest_ip, dest_port);
+#ifdef CONFIG_NF_FLOW_COOKIE
+	cm = si->sfe_flow_cookie_table[skb->flow_cookie & SFE_FLOW_COOKIE_MASK].match;
+	if (unlikely(!cm)) {
+		cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
+	}
+#else
+	cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
+#endif
 	if (unlikely(!cm)) {
 		/*
 		 * We didn't get a connection but as TCP is connection-oriented that
@@ -2350,6 +2439,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	original_cm->connection = c;
 	original_cm->counter_match = reply_cm;
 	original_cm->flags = 0;
+#ifdef CONFIG_NF_FLOW_COOKIE
+	original_cm->flow_cookie = 0;
+#endif
 	original_cm->active_next = NULL;
 	original_cm->active_prev = NULL;
 	original_cm->active = false;
@@ -2395,6 +2487,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	reply_cm->connection = c;
 	reply_cm->counter_match = original_cm;
 	reply_cm->flags = 0;
+#ifdef CONFIG_NF_FLOW_COOKIE
+	reply_cm->flow_cookie = 0;
+#endif
 	reply_cm->active_next = NULL;
 	reply_cm->active_prev = NULL;
 	reply_cm->active = false;
@@ -2823,6 +2918,9 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	uint64_t dest_rx_bytes;
 	uint64_t last_sync_jiffies;
 	uint32_t mark;
+#ifdef CONFIG_NF_FLOW_COOKIE
+	int src_flow_cookie, dst_flow_cookie;
+#endif
 
 	spin_lock_bh(&si->lock);
 	c = ws->iter_conn;
@@ -2908,6 +3006,10 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	dest_rx_bytes = reply_cm->rx_byte_count64;
 	last_sync_jiffies = get_jiffies_64() - c->last_sync_jiffies;
 	mark = c->mark;
+#ifdef CONFIG_NF_FLOW_COOKIE
+	src_flow_cookie = original_cm->flow_cookie;
+	dst_flow_cookie = reply_cm->flow_cookie;
+#endif
 	spin_unlock_bh(&si->lock);
 
 	bytes_read = snprintf(msg, CHAR_DEV_MSG_SIZE, "\t\t<connection "
@@ -2920,6 +3022,9 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				"dest_ip=\"%pI4\" dest_ip_xlate=\"%pI4\" "
 				"dest_port=\"%u\" dest_port_xlate=\"%u\" "
 				"dest_rx_pkts=\"%llu\" dest_rx_bytes=\"%llu\" "
+#ifdef CONFIG_NF_FLOW_COOKIE
+				"src_flow_cookie=\"%d\" dst_flow_cookie=\"%d\" "
+#endif
 				"last_sync=\"%llu\" "
 				"mark=\"%08x\" />\n",
 				protocol,
@@ -2931,6 +3036,9 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				&dest_ip, &dest_ip_xlate,
 				ntohs(dest_port), ntohs(dest_port_xlate),
 				dest_rx_packets, dest_rx_bytes,
+#ifdef CONFIG_NF_FLOW_COOKIE
+				src_flow_cookie, dst_flow_cookie,
+#endif
 				last_sync_jiffies, mark);
 
 	if (copy_to_user(buffer + *total_read, msg, CHAR_DEV_MSG_SIZE)) {
@@ -3273,6 +3381,44 @@ static struct file_operations sfe_ipv4_debug_dev_fops = {
 	.release = sfe_ipv4_debug_dev_release
 };
 
+#ifdef CONFIG_NF_FLOW_COOKIE
+/*
+ * sfe_register_flow_cookie_cb
+ *	register a function in SFE to let SFE use this function to configure flow cookie for a flow
+ *
+ * Hardware driver which support flow cookie should register a callback function in SFE. Then SFE
+ * can use this function to configure flow cookie for a flow.
+ * return: 0, success; !=0, fail
+ */
+int sfe_register_flow_cookie_cb(flow_cookie_set_func_t cb)
+{
+	struct sfe_ipv4 *si = &__si;
+
+	BUG_ON(!cb);
+
+	if (si->flow_cookie_set_func) {
+		return -1;
+	}
+
+	rcu_assign_pointer(si->flow_cookie_set_func, cb);
+	return 0;
+}
+
+/*
+ * sfe_unregister_flow_cookie_cb
+ *	unregister function which is used to configure flow cookie for a flow
+ *
+ * return: 0, success; !=0, fail
+ */
+int sfe_unregister_flow_cookie_cb(flow_cookie_set_func_t cb)
+{
+	struct sfe_ipv4 *si = &__si;
+
+	RCU_INIT_POINTER(si->flow_cookie_set_func, NULL);
+	return 0;
+}
+#endif /*CONFIG_NF_FLOW_COOKIE*/
+
 /*
  * sfe_ipv4_init()
  */
@@ -3368,6 +3514,10 @@ EXPORT_SYMBOL(sfe_ipv4_destroy_all_rules_for_dev);
 EXPORT_SYMBOL(sfe_ipv4_register_sync_rule_callback);
 EXPORT_SYMBOL(sfe_ipv4_mark_rule);
 EXPORT_SYMBOL(sfe_ipv4_update_rule);
+#ifdef CONFIG_NF_FLOW_COOKIE
+EXPORT_SYMBOL(sfe_register_flow_cookie_cb);
+EXPORT_SYMBOL(sfe_unregister_flow_cookie_cb);
+#endif
 
 MODULE_AUTHOR("Qualcomm Atheros Inc.");
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - IPv4 edition");

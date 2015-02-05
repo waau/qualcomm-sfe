@@ -1550,10 +1550,10 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 #ifdef CONFIG_NF_FLOW_COOKIE
 	cm = si->sfe_flow_cookie_table[skb->flow_cookie & SFE_FLOW_COOKIE_MASK].match;
 	if (unlikely(!cm)) {
-		cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
+		cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_TCP, src_ip, src_port, dest_ip, dest_port);
 	}
 #else
-	cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
+	cm = sfe_ipv4_find_sfe_ipv4_connection_match(si, dev, IPPROTO_TCP, src_ip, src_port, dest_ip, dest_port);
 #endif
 	if (unlikely(!cm)) {
 		/*

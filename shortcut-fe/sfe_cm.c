@@ -560,26 +560,24 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * the case then find the bridge interface instead.
 	 */
 	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
-		src_br_dev = SFE_DEV_MASTER(src_dev);
+		src_br_dev = sfe_dev_get_master(src_dev);
 		if (!src_br_dev) {
 			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
 			goto done2;
 		}
 
-		dev_hold(src_br_dev);
 		src_dev = src_br_dev;
 	}
 
 	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
-		dest_br_dev = SFE_DEV_MASTER(dest_dev);
+		dest_br_dev = sfe_dev_get_master(dest_dev);
 		if (!dest_br_dev) {
 			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
 			goto done3;
 		}
 
-		dev_hold(dest_br_dev);
 		dest_dev = dest_br_dev;
 	}
 #endif

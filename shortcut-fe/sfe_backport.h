@@ -40,11 +40,27 @@ static unsigned int __sfe_cm_ipv6_post_routing_hook(unsigned int HOOKNUM, \
 						    int (*OKFN)(struct sk_buff *))
 #endif
 
+/*
+ * sfe_dev_get_master
+ * 	get master of bridge port, and hold it
+ */
+static inline struct net_device *sfe_dev_get_master(struct net_device *dev)
+{
+	struct net_device *master;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
-#define SFE_DEV_MASTER(DEV) netdev_master_upper_dev_get(DEV)
+	rcu_read_lock();
+	master = netdev_master_upper_dev_get_rcu(dev);
+	if (master)
+		dev_hold(master);
+
+	rcu_read_unlock();
 #else
-#define SFE_DEV_MASTER(DEV) ((DEV)->master)
+	master = dev->master;
+	if (master)
+		dev_hold(master);
 #endif
+	return master;
+}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
 #define SFE_NF_CONN_ACCT(NM) struct nf_conn_acct *NM

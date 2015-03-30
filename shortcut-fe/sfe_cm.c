@@ -862,9 +862,9 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 /*
  * sfe_cm_device_event()
  */
-static int sfe_cm_device_event(struct notifier_block *this, unsigned long event, void *ptr)
+int sfe_cm_device_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	struct net_device *dev = (struct net_device *)ptr;
+	struct net_device *dev = SFE_DEV_EVENT_PTR(ptr);
 
 	switch (event) {
 	case NETDEV_DOWN:
@@ -884,7 +884,7 @@ static int sfe_cm_device_event(struct notifier_block *this, unsigned long event,
 static int sfe_cm_inet_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = ((struct in_ifaddr *)ptr)->ifa_dev->dev;
-	return sfe_cm_device_event(this, event, dev);
+	return sfe_cm_propagate_event(this, event, dev);
 }
 
 /*
@@ -893,7 +893,7 @@ static int sfe_cm_inet_event(struct notifier_block *this, unsigned long event, v
 static int sfe_cm_inet6_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = ((struct inet6_ifaddr *)ptr)->idev->dev;
-	return sfe_cm_device_event(this, event, dev);
+	return sfe_cm_propagate_event(this, event, dev);
 }
 
 /*

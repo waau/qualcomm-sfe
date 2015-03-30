@@ -62,6 +62,33 @@ static inline struct net_device *sfe_dev_get_master(struct net_device *dev)
 	return master;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+#define SFE_DEV_EVENT_PTR(PTR) netdev_notifier_info_to_dev(PTR)
+#else
+#define SFE_DEV_EVENT_PTR(PTR) (struct net_device *)(PTR)
+#endif
+
+/*
+ * declare function sfe_cm_device_event
+ */
+int sfe_cm_device_event(struct notifier_block *this, unsigned long event, void *ptr);
+
+/*
+ * sfe_cm_propagate_event
+ *     propagate ip address event as network device event
+ */
+static inline int sfe_cm_propagate_event(struct notifier_block *this, unsigned long event, struct net_device *dev)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+       struct netdev_notifier_info info;
+
+       netdev_notifier_info_init(&info, dev);
+       return sfe_cm_device_event(this, event, &info);
+#else
+       return sfe_cm_device_event(this, event, dev);
+#endif
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
 #define SFE_NF_CONN_ACCT(NM) struct nf_conn_acct *NM
 #else

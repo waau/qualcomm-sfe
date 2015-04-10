@@ -1219,7 +1219,7 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (unlikely(len < (sizeof(struct sfe_ipv4_udp_hdr) + ihl))) {
+	if (unlikely(!pskb_may_pull(skb, (sizeof(struct sfe_ipv4_udp_hdr) + ihl)))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1561,7 +1561,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (unlikely(len < (sizeof(struct sfe_ipv4_tcp_hdr) + ihl))) {
+	if (unlikely(!pskb_may_pull(skb, (sizeof(struct sfe_ipv4_tcp_hdr) + ihl)))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_TCP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -2011,12 +2011,13 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	__be16 dest_port;
 	struct sfe_ipv4_connection_match *cm;
 	struct sfe_ipv4_connection *c;
+	uint32_t pull_len = sizeof(struct icmphdr) + ihl;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
 	len -= ihl;
-	if (unlikely(len < sizeof(struct icmphdr))) {
+	if (!pskb_may_pull(skb, pull_len)) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -2045,7 +2046,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	 * Do we have the full embedded IP header?
 	 */
 	len -= sizeof(struct icmphdr);
-	if (unlikely(len < sizeof(struct sfe_ipv4_ip_hdr))) {
+	pull_len += sizeof(struct sfe_ipv4_ip_hdr);
+	if (!pskb_may_pull(skb, pull_len)) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -2074,7 +2076,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	 */
 	icmp_ihl_words = icmp_iph->ihl;
 	icmp_ihl = icmp_ihl_words << 2;
-	if (unlikely(len < icmp_ihl)) {
+	pull_len += icmp_ihl - sizeof(struct sfe_ipv4_ip_hdr);
+	if (!pskb_may_pull(skb, pull_len)) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_IP_OPTIONS_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -2096,7 +2099,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 		 * We should have 8 bytes of UDP header - that's enough to identify
 		 * the connection.
 		 */
-		if (unlikely(len < 8)) {
+		pull_len += 8;
+		if (!pskb_may_pull(skb, pull_len)) {
 			spin_lock(&si->lock);
 			si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_UDP_HEADER_INCOMPLETE]++;
 			si->packets_not_forwarded++;
@@ -2116,7 +2120,8 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 		 * We should have 8 bytes of TCP header - that's enough to identify
 		 * the connection.
 		 */
-		if (unlikely(len < 8)) {
+		pull_len += 8;
+		if (!pskb_may_pull(skb, pull_len)) {
 			spin_lock(&si->lock);
 			si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_TCP_HEADER_INCOMPLETE]++;
 			si->packets_not_forwarded++;
@@ -2199,7 +2204,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	 * Check that we have space for an IP header here.
 	 */
 	len = skb->len;
-	if (unlikely(len < sizeof(struct sfe_ipv4_ip_hdr))) {
+	if (unlikely(!pskb_may_pull(skb, sizeof(struct sfe_ipv4_ip_hdr)))) {
 		spin_lock(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;

@@ -2,7 +2,7 @@
  * sfe_ipv4.c
  *	Shortcut forwarding engine - IPv4 edition.
  *
- * Copyright (c) 2013 Qualcomm Atheros, Inc.
+ * Copyright (c) 2013~2015 Qualcomm Atheros, Inc.
  *
  * All Rights Reserved.
  * Qualcomm Atheros Confidential and Proprietary.
@@ -212,10 +212,15 @@ struct sfe_ipv4_connection_match {
 	__be16 xlate_src_port;	/* Port/connection ident after source translation */
 	uint16_t xlate_src_csum_adjustment;
 					/* Transport layer checksum adjustment after source translation */
+	uint16_t xlate_src_partial_csum_adjustment;
+					/* Transport layer pseudo header checksum adjustment after source translation */
+
 	__be32 xlate_dest_ip;		/* Address after destination translation */
 	__be16 xlate_dest_port;	/* Port/connection ident after destination translation */
 	uint16_t xlate_dest_csum_adjustment;
 					/* Transport layer checksum adjustment after destination translation */
+	uint16_t xlate_dest_partial_csum_adjustment;
+					/* Transport layer pseudo header checksum adjustment after destination translation */
 
 	/*
 	 * Packet transmit information.
@@ -670,6 +675,29 @@ static void sfe_ipv4_connection_match_compute_translations(struct sfe_ipv4_conne
 		adj = (adj & 0xffff) + (adj >> 16);
 		cm->xlate_dest_csum_adjustment = (uint16_t)adj;
 	}
+
+	if (cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC) {
+		uint32_t adj = ~cm->match_src_ip + cm->xlate_src_ip;
+		if (adj < cm->xlate_src_ip) {
+			adj++;
+		}
+
+		adj = (adj & 0xffff) + (adj >> 16);
+		adj = (adj & 0xffff) + (adj >> 16);
+		cm->xlate_src_partial_csum_adjustment = (uint16_t)adj;
+	}
+
+	if (cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST) {
+		uint32_t adj = ~cm->match_dest_ip + cm->xlate_dest_ip;
+		if (adj < cm->xlate_dest_ip) {
+			adj++;
+		}
+
+		adj = (adj & 0xffff) + (adj >> 16);
+		adj = (adj & 0xffff) + (adj >> 16);
+		cm->xlate_dest_partial_csum_adjustment = (uint16_t)adj;
+	}
+
 }
 
 /*
@@ -1308,7 +1336,14 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 */
 		udp_csum = udph->check;
 		if (likely(udp_csum)) {
-			uint32_t sum = udp_csum + cm->xlate_src_csum_adjustment;
+			uint32_t sum;
+
+			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+				sum = udp_csum + cm->xlate_src_partial_csum_adjustment;
+			} else {
+				sum = udp_csum + cm->xlate_src_csum_adjustment;
+			}
+
 			sum = (sum & 0xffff) + (sum >> 16);
 			udph->check = (uint16_t)sum;
 		}
@@ -1329,7 +1364,14 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 */
 		udp_csum = udph->check;
 		if (likely(udp_csum)) {
-			uint32_t sum = udp_csum + cm->xlate_dest_csum_adjustment;
+			uint32_t sum;
+
+			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+				sum = udp_csum + cm->xlate_dest_partial_csum_adjustment;
+			} else {
+				sum = udp_csum + cm->xlate_dest_csum_adjustment;
+			}
+
 			sum = (sum & 0xffff) + (sum >> 16);
 			udph->check = (uint16_t)sum;
 		}
@@ -1827,7 +1869,12 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * to update it.
 		 */
 		tcp_csum = tcph->check;
-		sum = tcp_csum + cm->xlate_src_csum_adjustment;
+		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+			sum = tcp_csum + cm->xlate_src_partial_csum_adjustment;
+		} else {
+			sum = tcp_csum + cm->xlate_src_csum_adjustment;
+		}
+
 		sum = (sum & 0xffff) + (sum >> 16);
 		tcph->check = (uint16_t)sum;
 	}
@@ -1847,7 +1894,12 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * to update it.
 		 */
 		tcp_csum = tcph->check;
-		sum = tcp_csum + cm->xlate_dest_csum_adjustment;
+		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+			sum = tcp_csum + cm->xlate_dest_partial_csum_adjustment;
+		} else {
+			sum = tcp_csum + cm->xlate_dest_csum_adjustment;
+		}
+
 		sum = (sum & 0xffff) + (sum >> 16);
 		tcph->check = (uint16_t)sum;
 	}

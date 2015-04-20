@@ -2,7 +2,7 @@
  * sfe_ipv4.c
  *	Shortcut forwarding engine - IPv4 edition.
  *
- * Copyright (c) 2013~2015 Qualcomm Atheros, Inc.
+ * Copyright (c) 2013-2015 Qualcomm Atheros, Inc.
  *
  * All Rights Reserved.
  * Qualcomm Atheros Confidential and Proprietary.
@@ -1657,7 +1657,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 * If our packet is larger than the MTU of the transmit interface then
 	 * we can't forward it easily.
 	 */
-	if (unlikely(len > cm->xmit_dev_mtu)) {
+	if (unlikely((len > cm->xmit_dev_mtu) && !skb_is_gso(skb))) {
 		struct sfe_ipv4_connection *c = cm->connection;
 		sfe_ipv4_remove_sfe_ipv4_connection(si, c);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_TCP_NEEDS_FRAGMENTATION]++;

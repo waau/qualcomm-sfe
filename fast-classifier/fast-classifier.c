@@ -675,7 +675,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
 						spin_unlock_irqrestore(&sfe_connections_lock, flags);
 						DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
-						return 0;
+						return NF_ACCEPT;
 					}
 					DEBUG_TRACE("INFO: calling sfe rule creation!\n");
 					spin_unlock_irqrestore(&sfe_connections_lock, flags);

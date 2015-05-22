@@ -124,7 +124,7 @@ extern int nf_ct_tcp_no_window_check;
  * 	only implement ingress for now, because for egress we
  * 	want to have the bridge devices qdiscs be used.
  */
-static bool skip_to_bridge_ingress = 0;
+static bool skip_to_bridge_ingress;
 #endif
 
 /*
@@ -260,7 +260,7 @@ struct sfe_connection {
 	unsigned char smac[ETH_ALEN];
 	unsigned char dmac[ETH_ALEN];
 };
-static int sfe_connections_size = 0;
+static int sfe_connections_size;
 
 #define FC_CONN_HASH_ORDER 13
 static DEFINE_HASHTABLE(fc_conn_ht, FC_CONN_HASH_ORDER);
@@ -268,8 +268,8 @@ static DEFINE_HASHTABLE(fc_conn_ht, FC_CONN_HASH_ORDER);
 static u32 fc_conn_hash (unsigned long src_saddr, unsigned long dst_saddr,
 		unsigned short sport, unsigned short dport)
 {
-	return (src_saddr ^ dst_saddr ^
-		(sport | (dport << 16)));
+	return src_saddr ^ dst_saddr ^
+		(sport | (dport << 16));
 }
 
 /*
@@ -279,43 +279,43 @@ static u32 fc_conn_hash (unsigned long src_saddr, unsigned long dst_saddr,
 static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct nf_conn *ct)
 {
 	switch (p_sic->protocol) {
-		case IPPROTO_TCP:
-			p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
-			p_sic->src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
-			p_sic->src_td_end = ct->proto.tcp.seen[0].td_end;
-			p_sic->src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
-			p_sic->dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
-			p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
-			p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
-			p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
-			if (nf_ct_tcp_no_window_check
-			    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
-			    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
-				p_sic->flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
-			}
+	case IPPROTO_TCP:
+		p_sic->src_td_window_scale = ct->proto.tcp.seen[0].td_scale;
+		p_sic->src_td_max_window = ct->proto.tcp.seen[0].td_maxwin;
+		p_sic->src_td_end = ct->proto.tcp.seen[0].td_end;
+		p_sic->src_td_max_end = ct->proto.tcp.seen[0].td_maxend;
+		p_sic->dest_td_window_scale = ct->proto.tcp.seen[1].td_scale;
+		p_sic->dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
+		p_sic->dest_td_end = ct->proto.tcp.seen[1].td_end;
+		p_sic->dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
+		if (nf_ct_tcp_no_window_check
+		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
+		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
+			p_sic->flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
+		}
 
-			/*
-			 * If the connection is shutting down do not manage it.
-			 * state can not be SYN_SENT, SYN_RECV because connection is assured
-			 * Not managed states: FIN_WAIT, CLOSE_WAIT, LAST_ACK, TIME_WAIT, CLOSE.
-			 */
-			spin_lock(&ct->lock);
-			if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
-				spin_unlock(&ct->lock);
-				DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
-					    ct->proto.tcp.state, &p_sic->src_ip, ntohs(p_sic->src_port),
-					    &p_sic->dest_ip, ntohs(p_sic->dest_port));
-				return 0;
-			}
+		/*
+		 * If the connection is shutting down do not manage it.
+		 * state can not be SYN_SENT, SYN_RECV because connection is assured
+		 * Not managed states: FIN_WAIT, CLOSE_WAIT, LAST_ACK, TIME_WAIT, CLOSE.
+		 */
+		spin_lock(&ct->lock);
+		if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
 			spin_unlock(&ct->lock);
-			break;
-
-		case IPPROTO_UDP:
-			break;
-
-		default:
-			DEBUG_TRACE("unhandled protocol %d\n", p_sic->protocol);
+			DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
+				    ct->proto.tcp.state, &p_sic->src_ip, ntohs(p_sic->src_port),
+				    &p_sic->dest_ip, ntohs(p_sic->dest_port));
 			return 0;
+		}
+		spin_unlock(&ct->lock);
+		break;
+
+	case IPPROTO_UDP:
+		break;
+
+	default:
+		DEBUG_TRACE("unhandled protocol %d\n", p_sic->protocol);
+		return 0;
 	}
 
 	return 1;
@@ -324,7 +324,8 @@ static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct
 /* fast_classifier_send_genl_msg()
  * 	Function to send a generic netlink message
  */
-static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple *fc_msg) {
+static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple *fc_msg)
+{
 	struct sk_buff *skb;
 	int rc;
 	void *msg_head;
@@ -356,23 +357,23 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 
 	rc = genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp.id, GFP_ATOMIC);
 	switch (msg) {
-		case FAST_CLASSIFIER_C_OFFLOADED:
-			if (rc == 0) {
-				atomic_inc(&offloaded_msgs);
-			} else {
-				atomic_inc(&offloaded_fail_msgs);
-			}
-			break;
-		case FAST_CLASSIFIER_C_DONE:
-			if (rc == 0) {
-				atomic_inc(&done_msgs);
-			} else {
-				atomic_inc(&done_fail_msgs);
-			}
-			break;
-		default:
-			DEBUG_ERROR("fast-classifer: Unknown message type sent!\n");
-			break;
+	case FAST_CLASSIFIER_C_OFFLOADED:
+		if (rc == 0) {
+			atomic_inc(&offloaded_msgs);
+		} else {
+			atomic_inc(&offloaded_fail_msgs);
+		}
+		break;
+	case FAST_CLASSIFIER_C_DONE:
+		if (rc == 0) {
+			atomic_inc(&done_msgs);
+		} else {
+			atomic_inc(&done_fail_msgs);
+		}
+		break;
+	default:
+		DEBUG_ERROR("fast-classifer: Unknown message type sent!\n");
+		break;
 	}
 	DEBUG_TRACE("INFO: %d : %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
 			msg, fc_msg->proto,
@@ -412,7 +413,7 @@ __fast_classifier_find_conn(u32 key,
 		    p_sic->src_port == sport &&
 		    p_sic->dest_port_xlate == dport &&
 		    p_sic->src_ip == saddr &&
-		    p_sic->dest_ip_xlate == daddr ) {
+		    p_sic->dest_ip_xlate == daddr) {
 			return conn;
 		}
 	}
@@ -666,7 +667,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 		    p_sic->src_port == sic.src_port &&
 		    p_sic->dest_port == sic.dest_port &&
 		    p_sic->src_ip == sic.src_ip &&
-		    p_sic->dest_ip == sic.dest_ip ) {
+		    p_sic->dest_ip == sic.dest_ip) {
 			conn->hits++;
 			if (conn->offloaded == 0) {
 				if (conn->hits >= offload_at_pkts) {
@@ -880,7 +881,7 @@ static void fast_classifier_update_mark(struct sfe_ipv4_mark *mark)
 		    p_sic->src_port == mark->src_port &&
 		    p_sic->dest_port == mark->dest_port &&
 		    p_sic->src_ip == mark->src_ip &&
-		    p_sic->dest_ip == mark->dest_ip ) {
+		    p_sic->dest_ip == mark->dest_ip) {
 
 			p_sic->mark = mark->mark;
 
@@ -1023,7 +1024,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 		    p_sic->src_port == sid.src_port &&
 		    p_sic->dest_port == sid.dest_port &&
 		    p_sic->src_ip == sid.src_ip &&
-		    p_sic->dest_ip == sid.dest_ip ) {
+		    p_sic->dest_ip == sid.dest_ip) {
 			fc_msg.proto = p_sic->protocol;
 			fc_msg.src_saddr = p_sic->src_ip;
 			fc_msg.dst_saddr = p_sic->dest_ip_xlate;

@@ -29,32 +29,40 @@
 #define DEBUG_ERROR(s, ...)
 #else
 #define DEBUG_ERROR(s, ...) \
+do { \
 	printk("%s[%u]: ERROR:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__)
+	printk(s, ##__VA_ARGS__); \
+} while (0)
 #endif
 
 #if (DEBUG_LEVEL < 2)
 #define DEBUG_WARN(s, ...)
 #else
 #define DEBUG_WARN(s, ...) \
+do { \
 	printk("%s[%u]: WARN:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__);
+	printk(s, ##__VA_ARGS__); \
+} while (0)
 #endif
 
 #if (DEBUG_LEVEL < 3)
 #define DEBUG_INFO(s, ...)
 #else
 #define DEBUG_INFO(s, ...) \
+do { \
 	printk("%s[%u]: INFO:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__);
+	printk(s, ##__VA_ARGS__); \
+} while (0)
 #endif
 
 #if (DEBUG_LEVEL < 4)
 #define DEBUG_TRACE(s, ...)
 #else
 #define DEBUG_TRACE(s, ...) \
+do { \
 	printk("%s[%u]: TRACE:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__);
+	printk(s, ##__VA_ARGS__); \
+} while (0)
 #endif
 
 #ifdef CONFIG_NF_FLOW_COOKIE

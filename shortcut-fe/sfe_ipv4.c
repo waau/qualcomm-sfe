@@ -57,7 +57,7 @@ struct sfe_ipv4_ip_hdr {
 	     version:4;
 #elif defined (__BIG_ENDIAN_BITFIELD)
 	__u8 version:4,
-  	     ihl:4;
+	     ihl:4;
 #else
 #error	"Please fix <asm/byteorder.h>"
 #endif
@@ -771,7 +771,7 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 			rcu_read_lock();
 			func = rcu_dereference(si->flow_cookie_set_func);
 			if (func) {
-				if(!func(cm->match_protocol, cm->match_src_ip, cm->match_src_port,
+				if (!func(cm->match_protocol, cm->match_src_ip, cm->match_src_port,
 					 cm->match_dest_ip, cm->match_dest_port, conn_match_idx)) {
 					entry->match = cm;
 					cm->flow_cookie = conn_match_idx;
@@ -3251,8 +3251,8 @@ static bool sfe_ipv4_debug_dev_read_stats(struct sfe_ipv4 *si, char *buffer, cha
 
 	bytes_read = snprintf(msg, CHAR_DEV_MSG_SIZE, "\t<stats "
 			      "num_connections=\"%u\" "
-		 	      "pkts_forwarded=\"%llu\" pkts_not_forwarded=\"%llu\" "
-		 	      "create_requests=\"%llu\" create_collisions=\"%llu\" "
+			      "pkts_forwarded=\"%llu\" pkts_not_forwarded=\"%llu\" "
+			      "create_requests=\"%llu\" create_collisions=\"%llu\" "
 			      "destroy_requests=\"%llu\" destroy_misses=\"%llu\" "
 			      "flushes=\"%llu\" "
 			      "hash_hits=\"%llu\" hash_reorders=\"%llu\" />\n",
@@ -3548,8 +3548,6 @@ static void __exit sfe_ipv4_exit(void)
 	 * Destroy all connections.
 	 */
 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
-
-// XXX - this is where we need to unregister with any lower level offload services.
 
 	del_timer_sync(&si->timer);
 

@@ -100,7 +100,7 @@ int sfe_cm_recv(struct sk_buff *skb)
 
 	/*
 	 * We're only interested in IP packets.
-	 */	
+	 */
 	if (likely(htons(ETH_P_IP) == skb->protocol)) {
 		return sfe_ipv4_recv(dev, skb);
 	}
@@ -143,7 +143,7 @@ static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev,
 	if (unlikely(!neigh)) {
 		rcu_read_unlock();
 		dst_release(dst);
-		return false; 
+		return false;
 	}
 
 	if (unlikely(!(neigh->nud_state & NUD_VALID))) {
@@ -695,7 +695,7 @@ static int __init sfe_cm_init(void)
 	result = nf_register_hooks(sfe_cm_ipv4_ops_post_routing, ARRAY_SIZE(sfe_cm_ipv4_ops_post_routing));
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
-		goto exit6;
+		goto exit2;
 	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -705,7 +705,7 @@ static int __init sfe_cm_init(void)
 	result = nf_conntrack_register_notifier(&init_net, &sfe_cm_conntrack_notifier);
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf notifier hook: %d\n", result);
-		goto exit7;
+		goto exit3;
 	}
 #endif
 
@@ -724,11 +724,11 @@ static int __init sfe_cm_init(void)
 	return 0;
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-exit7:
+exit3:
 #endif
 	nf_unregister_hooks(sfe_cm_ipv4_ops_post_routing, ARRAY_SIZE(sfe_cm_ipv4_ops_post_routing));
 
-exit6:
+exit2:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
 	kobject_put(sc->sys_sfe_cm);
@@ -765,8 +765,6 @@ static void __exit sfe_cm_exit(void)
 	 * Destroy all connections.
 	 */
 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
-
-// XXX - this is where we need to unregister with any lower level offload services.
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &sfe_cm_conntrack_notifier);

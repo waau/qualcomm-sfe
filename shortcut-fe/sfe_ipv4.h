@@ -12,7 +12,7 @@
  * IPv4 connection flags.
  */
 #define SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK 0x1
- 					/* Indicates that we should not check sequence numbers */
+					/* Indicates that we should not check sequence numbers */
 
 /*
  * IPv4 connection creation structure.

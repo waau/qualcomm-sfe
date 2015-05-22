@@ -1,3 +1,13 @@
+/*
+ * sfe_backport.h
+ *	Shortcut forwarding engine compatible header file.
+ *
+ * Copyright (c) 2014-2015 Qualcomm Atheros, Inc.
+ *
+ * All Rights Reserved.
+ * Qualcomm Atheros Confidential and Proprietary.
+ */
+
 #include <linux/version.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)

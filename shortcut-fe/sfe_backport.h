@@ -17,9 +17,23 @@ static unsigned int __sfe_cm_ipv4_post_routing_hook(const struct nf_hook_ops *OP
 						    const struct net_device *UNUSED, \
 						    const struct net_device *OUT, \
 						    int (*OKFN)(struct sk_buff *))
+
+#define sfe_cm_ipv6_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
+static unsigned int __sfe_cm_ipv6_post_routing_hook(const struct nf_hook_ops *OPS, \
+						    struct sk_buff *SKB, \
+						    const struct net_device *UNUSED, \
+						    const struct net_device *OUT, \
+						    int (*OKFN)(struct sk_buff *))
 #else
 #define sfe_cm_ipv4_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
 static unsigned int __sfe_cm_ipv4_post_routing_hook(unsigned int HOOKNUM, \
+						    struct sk_buff *SKB, \
+						    const struct net_device *UNUSED, \
+						    const struct net_device *OUT, \
+						    int (*OKFN)(struct sk_buff *))
+
+#define sfe_cm_ipv6_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
+static unsigned int __sfe_cm_ipv6_post_routing_hook(unsigned int HOOKNUM, \
 						    struct sk_buff *SKB, \
 						    const struct net_device *UNUSED, \
 						    const struct net_device *OUT, \

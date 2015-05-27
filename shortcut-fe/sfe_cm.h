@@ -129,3 +129,51 @@ extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
 extern void sfe_ipv4_register_sync_rule_callback(sfe_sync_rule_callback_t callback);
 extern void sfe_ipv4_update_rule(struct sfe_connection_create *sic);
 extern void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark);
+
+#ifdef SFE_SUPPORT_IPV6
+/*
+ * IPv6 APIs used by connection manager
+ */
+extern int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb);
+extern int sfe_ipv6_create_rule(struct sfe_connection_create *sic);
+extern void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid);
+extern void sfe_ipv6_destroy_all_rules_for_dev(struct net_device *dev);
+extern void sfe_ipv6_register_sync_rule_callback(sfe_sync_rule_callback_t callback);
+extern void sfe_ipv6_update_rule(struct sfe_connection_create *sic);
+extern void sfe_ipv6_mark_rule(struct sfe_connection_mark *mark);
+#else
+static inline int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
+{
+	return 0;
+}
+
+static inline int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
+{
+	return -1;
+}
+
+static inline void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
+{
+	return;
+}
+
+static inline void sfe_ipv6_destroy_all_rules_for_dev(struct net_device *dev)
+{
+	return;
+}
+
+static inline void sfe_ipv6_register_sync_rule_callback(sfe_sync_rule_callback_t callback)
+{
+	return;
+}
+
+static inline void sfe_ipv6_update_rule(struct sfe_connection_create *sic)
+{
+	return;
+}
+
+static inline void sfe_ipv6_mark_rule(struct sfe_connection_mark *mark)
+{
+	return;
+}
+#endif

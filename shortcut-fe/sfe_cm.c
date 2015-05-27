@@ -12,8 +12,11 @@
 #include <linux/sysfs.h>
 #include <linux/skbuff.h>
 #include <net/route.h>
+#include <net/ip6_route.h>
+#include <net/addrconf.h>
 #include <linux/inetdevice.h>
 #include <linux/netfilter_bridge.h>
+#include <linux/netfilter_ipv6.h>
 #include <net/netfilter/nf_conntrack_acct.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_zones.h>
@@ -41,7 +44,9 @@ struct sfe_cm {
 	struct notifier_block dev_notifier;
 					/* Device notifier */
 	struct notifier_block inet_notifier;
-					/* IP notifier */
+					/* IPv4 notifier */
+	struct notifier_block inet6_notifier;
+					/* IPv6 notifier */
 };
 
 struct sfe_cm __sc;
@@ -65,9 +70,6 @@ extern int nf_ct_tcp_no_window_check;
 int sfe_cm_recv(struct sk_buff *skb)
 {
 	struct net_device *dev;
-#if (SFE_HOOK_ABOVE_BRIDGE)
-	struct in_device *in_dev;
-#endif
 
 	/*
 	 * We know that for the vast majority of packets we need the transport
@@ -78,31 +80,59 @@ int sfe_cm_recv(struct sk_buff *skb)
 
 	dev = skb->dev;
 
-#if (SFE_HOOK_ABOVE_BRIDGE)
 	/*
-	 * Does our input device support IP processing?
-	 */
-	in_dev = (struct in_device *)dev->ip_ptr;
-	if (unlikely(!in_dev)) {
-		DEBUG_TRACE("no IP processing for device: %s\n", dev->name);
-		return 0;
-	}
-
-	/*
-	 * Does it have an IP address?  If it doesn't then we can't do anything
-	 * interesting here!
-	 */
-	if (unlikely(!in_dev->ifa_list)) {
-		DEBUG_TRACE("no IP address for device: %s\n", dev->name);
-		return 0;
-	}
-#endif
-
-	/*
-	 * We're only interested in IP packets.
+	 * We're only interested in IPv4 and IPv6 packets.
 	 */
 	if (likely(htons(ETH_P_IP) == skb->protocol)) {
+#if (SFE_HOOK_ABOVE_BRIDGE)
+		struct in_device *in_dev;
+
+		/*
+		 * Does our input device support IP processing?
+		 */
+		in_dev = (struct in_device *)dev->ip_ptr;
+		if (unlikely(!in_dev)) {
+			DEBUG_TRACE("no IP processing for device: %s\n", dev->name);
+			return 0;
+		}
+
+		/*
+		 * Does it have an IP address?  If it doesn't then we can't do anything
+		 * interesting here!
+		 */
+		if (unlikely(!in_dev->ifa_list)) {
+			DEBUG_TRACE("no IP address for device: %s\n", dev->name);
+			return 0;
+		}
+#endif
+
 		return sfe_ipv4_recv(dev, skb);
+	}
+
+	if (likely(htons(ETH_P_IPV6) == skb->protocol)) {
+#if (SFE_HOOK_ABOVE_BRIDGE)
+		struct inet6_dev *in_dev;
+
+		/*
+		 * Does our input device support IPv6 processing?
+		 */
+		in_dev = (struct inet6_dev *)dev->ip6_ptr;
+		if (unlikely(!in_dev)) {
+			DEBUG_TRACE("no IPv6 processing for device: %s\n", dev->name);
+			return 0;
+		}
+
+		/*
+		 * Does it have an IPv6 address?  If it doesn't then we can't do anything
+		 * interesting here!
+		 */
+		if (unlikely(list_empty(&in_dev->addr_list))) {
+			DEBUG_TRACE("no IPv6 address for device: %s\n", dev->name);
+			return 0;
+		}
+#endif
+
+		return sfe_ipv6_recv(dev, skb);
 	}
 
 	DEBUG_TRACE("not IP packet\n");
@@ -111,7 +141,7 @@ int sfe_cm_recv(struct sk_buff *skb)
 
 /*
  * sfe_cm_find_dev_and_mac_addr()
- *	Find the device and MAC address for a given IPv4 address.
+ *	Find the device and MAC address for a given IPv4/IPv6 address.
  *
  * Returns true if we find the device and MAC address, otherwise false.
  *
@@ -123,27 +153,30 @@ static bool sfe_cm_find_dev_and_mac_addr(sfe_ip_addr_t *addr, struct net_device 
 {
 	struct neighbour *neigh;
 	struct rtable *rt;
+	struct rt6_info *rt6;
 	struct dst_entry *dst;
 	struct net_device *mac_dev;
-
-	if (unlikely(!is_v4)) {
-		/*
-		 * will support IPv6 soon
-		 */
-		goto ret_fail;
-	}
 
 	/*
 	 * Look up the rtable entry for the IP address then get the hardware
 	 * address from its neighbour structure.  This means this work when the
 	 * neighbours are routers too.
 	 */
-	rt = ip_route_output(&init_net, addr->ip, 0, 0, 0);
-	if (unlikely(IS_ERR(rt))) {
-		goto ret_fail;
-	}
+	if (likely(is_v4)) {
+		rt = ip_route_output(&init_net, addr->ip, 0, 0, 0);
+		if (unlikely(IS_ERR(rt))) {
+			goto ret_fail;
+		}
 
-	dst = (struct dst_entry *)rt;
+		dst = (struct dst_entry *)rt;
+	} else {
+		rt6 = rt6_lookup(&init_net, (struct in6_addr *)addr->ip6, 0, 0, 0);
+		if (!rt6) {
+			goto ret_fail;
+		}
+
+		dst = (struct dst_entry *)rt6;
+	}
 
 	rcu_read_lock();
 	neigh = dst_neigh_lookup(dst, addr);
@@ -284,10 +317,21 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		sic.src_ip_xlate.ip = (__be32)reply_tuple.dst.u3.ip;
 		sic.dest_ip_xlate.ip = (__be32)reply_tuple.src.u3.ip;
 	} else {
+		sic.src_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.src.u3.in6);
+		sic.dest_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.dst.u3.in6);
+
+		if (ipv6_addr_is_multicast((struct in6_addr *)sic.src_ip.ip6) ||
+		    ipv6_addr_is_multicast((struct in6_addr *)sic.dest_ip.ip6)) {
+			DEBUG_TRACE("multicast address\n");
+			return NF_ACCEPT;
+		}
+
 		/*
-		 * will support soon
-		*/
-		return NF_ACCEPT;
+		 * NAT'ed addresses - note these are as seen from the 'reply' direction
+		 * When NAT does not apply to this connection these will be identical to the above.
+		 */
+		sic.src_ip_xlate.ip6[0] = *((struct sfe_ipv6_addr *)&reply_tuple.dst.u3.in6);
+		sic.dest_ip_xlate.ip6[0] = *((struct sfe_ipv6_addr *)&reply_tuple.src.u3.in6);
 	}
 
 	sic.flags = 0;
@@ -430,7 +474,11 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	sic.src_mtu = src_dev->mtu;
 	sic.dest_mtu = dest_dev->mtu;
 
-	sfe_ipv4_create_rule(&sic);
+	if (likely(is_v4)) {
+		sfe_ipv4_create_rule(&sic);
+	} else {
+		sfe_ipv6_create_rule(&sic);
+	}
 
 	/*
 	 * If we had bridge ports then release them too.
@@ -461,6 +509,16 @@ sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 {
 	return sfe_cm_post_routing(skb, true);
 }
+
+/*
+ * sfe_cm_ipv6_post_routing_hook()
+ *	Called for packets about to leave the box - either locally generated or forwarded from another interface
+ */
+sfe_cm_ipv6_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
+{
+	return sfe_cm_post_routing(skb, false);
+}
+
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 /*
@@ -498,14 +556,6 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	}
 
 	/*
-	 * Ignore anything other than IPv4 connections.
-	 */
-	if (unlikely(nf_ct_l3num(ct) != AF_INET)) {
-		DEBUG_TRACE("ignoring non-IPv4 conn\n");
-		return NOTIFY_DONE;
-	}
-
-	/*
 	 * We're only interested in destroy events.
 	 */
 	if (unlikely(!(events & (1 << IPCT_DESTROY)))) {
@@ -520,9 +570,6 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	 * Extract information from the conntrack connection.  We're only interested
 	 * in nominal connection information (i.e. we're ignoring any NAT information).
 	 */
-	sid.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
-	sid.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
-
 	switch (sid.protocol) {
 	case IPPROTO_TCP:
 		sid.src_port = orig_tuple.src.u.tcp.port;
@@ -539,8 +586,20 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 		return NOTIFY_DONE;
 	}
 
+	if (likely(nf_ct_l3num(ct) == AF_INET)) {
+		sid.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+		sid.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
-	sfe_ipv4_destroy_rule(&sid);
+		sfe_ipv4_destroy_rule(&sid);
+	} else if (likely(nf_ct_l3num(ct) == AF_INET6)) {
+		sid.src_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.src.u3.in6);
+		sid.dest_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.dst.u3.in6);
+
+		sfe_ipv6_destroy_rule(&sid);
+	} else {
+		DEBUG_TRACE("ignoring non-IPv4 and non-IPv6 connection\n");
+	}
+
 	return NOTIFY_DONE;
 }
 
@@ -573,6 +632,15 @@ static struct nf_hook_ops sfe_cm_ops_post_routing[] __read_mostly = {
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_NAT_SRC + 1,
 	},
+#ifdef SFE_SUPPORT_IPV6
+	{
+		.hook = __sfe_cm_ipv6_post_routing_hook,
+		.owner = THIS_MODULE,
+		.pf = NFPROTO_IPV6,
+		.hooknum = NF_INET_POST_ROUTING,
+		.priority = NF_IP6_PRI_NAT_SRC + 1,
+	},
+#endif
 };
 
 /*
@@ -586,30 +654,34 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 	struct nf_conn *ct;
 	SFE_NF_CONN_ACCT(acct);
 
-	if (sis->is_v6) {
-		/*
-		 * will support soon
-		 */
-		return;
-	}
-
 	/*
 	 * Create a tuple so as to be able to look up a connection
 	 */
 	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u3.ip = sis->src_ip.ip;
 	tuple.src.u.all = (__be16)sis->src_port;
-	tuple.src.l3num = AF_INET;
-
-	tuple.dst.u3.ip = sis->dest_ip.ip;
 	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
 	tuple.dst.protonum = (uint8_t)sis->protocol;
 	tuple.dst.u.all = (__be16)sis->dest_port;
 
-	DEBUG_TRACE("update connection - p: %d, s: %pI4:%u, d: %pI4:%u\n",
-		    (int)tuple.dst.protonum,
-		    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
-		    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
+	if (sis->is_v6) {
+		tuple.src.u3.in6 = *((struct in6_addr *)sis->src_ip.ip6);
+		tuple.dst.u3.in6 = *((struct in6_addr *)sis->dest_ip.ip6);
+		tuple.src.l3num = AF_INET6;
+
+		DEBUG_TRACE("update connection - p: %d, s: %pI6:%u, d: %pI6:%u\n",
+			    (int)tuple.dst.protonum,
+			    &tuple.src.u3.in6, (unsigned int)ntohs(tuple.src.u.all),
+			    &tuple.dst.u3.in6, (unsigned int)ntohs(tuple.dst.u.all));
+	} else {
+		tuple.src.u3.ip = sis->src_ip.ip;
+		tuple.dst.u3.ip = sis->dest_ip.ip;
+		tuple.src.l3num = AF_INET;
+
+		DEBUG_TRACE("update connection - p: %d, s: %pI4:%u, d: %pI4:%u\n",
+			    (int)tuple.dst.protonum,
+			    &tuple.src.u3.ip, (unsigned int)ntohs(tuple.src.u.all),
+			    &tuple.dst.u3.ip, (unsigned int)ntohs(tuple.dst.u.all));
+	}
 
 	/*
 	 * Look up conntrack connection
@@ -684,6 +756,7 @@ static int sfe_cm_device_event(struct notifier_block *this, unsigned long event,
 	case NETDEV_DOWN:
 		if (dev) {
 			sfe_ipv4_destroy_all_rules_for_dev(dev);
+			sfe_ipv6_destroy_all_rules_for_dev(dev);
 		}
 		break;
 	}
@@ -697,6 +770,15 @@ static int sfe_cm_device_event(struct notifier_block *this, unsigned long event,
 static int sfe_cm_inet_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = ((struct in_ifaddr *)ptr)->ifa_dev->dev;
+	return sfe_cm_device_event(this, event, dev);
+}
+
+/*
+ * sfe_cm_inet6_event()
+ */
+static int sfe_cm_inet6_event(struct notifier_block *this, unsigned long event, void *ptr)
+{
+	struct net_device *dev = ((struct inet6_ifaddr *)ptr)->idev->dev;
 	return sfe_cm_device_event(this, event, dev);
 }
 
@@ -727,6 +809,9 @@ static int __init sfe_cm_init(void)
 	sc->inet_notifier.priority = 1;
 	register_inetaddr_notifier(&sc->inet_notifier);
 
+	sc->inet6_notifier.notifier_call = sfe_cm_inet6_event;
+	sc->inet6_notifier.priority = 1;
+	register_inet6addr_notifier(&sc->inet6_notifier);
 	/*
 	 * Register our netfilter hooks.
 	 */
@@ -759,6 +844,7 @@ static int __init sfe_cm_init(void)
 	 * Hook the shortcut sync callback.
 	 */
 	sfe_ipv4_register_sync_rule_callback(sfe_cm_sync_rule);
+	sfe_ipv6_register_sync_rule_callback(sfe_cm_sync_rule);
 	return 0;
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -767,6 +853,7 @@ exit3:
 	nf_unregister_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 
 exit2:
+	unregister_inet6addr_notifier(&sc->inet6_notifier);
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
 	kobject_put(sc->sys_sfe_cm);
@@ -788,6 +875,7 @@ static void __exit sfe_cm_exit(void)
 	 * Unregister our sync callback.
 	 */
 	sfe_ipv4_register_sync_rule_callback(NULL);
+	sfe_ipv6_register_sync_rule_callback(NULL);
 
 	/*
 	 * Unregister our receive callback.
@@ -803,6 +891,7 @@ static void __exit sfe_cm_exit(void)
 	 * Destroy all connections.
 	 */
 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
+	sfe_ipv6_destroy_all_rules_for_dev(NULL);
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 	nf_conntrack_unregister_notifier(&init_net, &sfe_cm_conntrack_notifier);
@@ -810,11 +899,11 @@ static void __exit sfe_cm_exit(void)
 #endif
 	nf_unregister_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 
+	unregister_inet6addr_notifier(&sc->inet6_notifier);
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
 
 	kobject_put(sc->sys_sfe_cm);
-
 }
 
 module_init(sfe_cm_init)

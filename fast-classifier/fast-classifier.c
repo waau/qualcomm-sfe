@@ -24,7 +24,7 @@
 #include <linux/hashtable.h>
 
 #include "../shortcut-fe/sfe.h"
-#include "../shortcut-fe/sfe_ipv4.h"
+#include "../shortcut-fe/sfe_cm.h"
 #include "fast-classifier.h"
 
 /*
@@ -253,7 +253,7 @@ static DEFINE_SPINLOCK(sfe_connections_lock);
 
 struct sfe_connection {
 	struct hlist_node hl;
-	struct sfe_ipv4_create *sic;
+	struct sfe_connection_create *sic;
 	struct nf_conn *ct;
 	int hits;
 	int offloaded;
@@ -276,7 +276,7 @@ static u32 fc_conn_hash (unsigned long src_saddr, unsigned long dst_saddr,
  * fast_classifier_update_protocol()
  * 	Update sfe_ipv4_create struct with new protocol information before we offload
  */
-static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct nf_conn *ct)
+static int fast_classifier_update_protocol(struct sfe_connection_create *p_sic, struct nf_conn *ct)
 {
 	switch (p_sic->protocol) {
 	case IPPROTO_TCP:
@@ -291,7 +291,7 @@ static int fast_classifier_update_protocol(struct sfe_ipv4_create *p_sic, struct
 		if (nf_ct_tcp_no_window_check
 		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
 		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
-			p_sic->flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
+			p_sic->flags |= SFE_CREATE_FLAG_NO_SEQ_CHECK;
 		}
 
 		/*
@@ -397,7 +397,7 @@ __fast_classifier_find_conn(u32 key,
 			    unsigned short sport,
 			    unsigned short dport)
 {
-	struct sfe_ipv4_create *p_sic;
+	struct sfe_connection_create *p_sic;
 	struct sfe_connection *conn;
 	struct hlist_node *node;
 
@@ -412,8 +412,8 @@ __fast_classifier_find_conn(u32 key,
 		if (p_sic->protocol == proto &&
 		    p_sic->src_port == sport &&
 		    p_sic->dest_port_xlate == dport &&
-		    p_sic->src_ip == saddr &&
-		    p_sic->dest_ip_xlate == daddr) {
+		    p_sic->src_ip.ip == saddr &&
+		    p_sic->dest_ip_xlate.ip == daddr) {
 			return conn;
 		}
 	}
@@ -524,8 +524,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 						  int (*okfn)(struct sk_buff *))
 {
 	int ret;
-	struct sfe_ipv4_create sic;
-	struct sfe_ipv4_create *p_sic;
+	struct sfe_connection_create sic;
+	struct sfe_connection_create *p_sic;
 	struct net_device *in;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
@@ -602,10 +602,10 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	/*
 	 * Get addressing information, non-NAT first
 	 */
-	sic.src_ip = (__be32)orig_tuple.src.u3.ip;
-	sic.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+	sic.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+	sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
-	if (ipv4_is_multicast(sic.src_ip) || ipv4_is_multicast(sic.dest_ip)) {
+	if (ipv4_is_multicast(sic.src_ip.ip) || ipv4_is_multicast(sic.dest_ip.ip)) {
 		DEBUG_TRACE("multicast address\n");
 		return NF_ACCEPT;
 	}
@@ -614,8 +614,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	 * NAT'ed addresses - note these are as seen from the 'reply' direction
 	 * When NAT does not apply to this connection these will be identical to the above.
 	 */
-	sic.src_ip_xlate = (__be32)reply_tuple.dst.u3.ip;
-	sic.dest_ip_xlate = (__be32)reply_tuple.src.u3.ip;
+	sic.src_ip_xlate.ip = (__be32)reply_tuple.dst.u3.ip;
+	sic.dest_ip_xlate.ip = (__be32)reply_tuple.src.u3.ip;
 
 	sic.flags = 0;
 
@@ -653,21 +653,21 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	 * XXX: this may need to be optimized
 	 */
 	DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
-			sic.protocol, sic.src_ip, sic.dest_ip,
+			sic.protocol, sic.src_ip.ip, sic.dest_ip.ip,
 			sic.src_port, sic.dest_port);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	key = fc_conn_hash(sic.src_ip, sic.dest_ip, sic.src_port, sic.dest_port);
+	key = fc_conn_hash(sic.src_ip.ip, sic.dest_ip.ip, sic.src_port, sic.dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE("\t\t-> COMPARING: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d...",
-				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
+				p_sic->protocol, &p_sic->src_ip, &p_sic->dest_ip,
 				p_sic->src_port, p_sic->dest_port);
 
 		if (p_sic->protocol == sic.protocol &&
 		    p_sic->src_port == sic.src_port &&
 		    p_sic->dest_port == sic.dest_port &&
-		    p_sic->src_ip == sic.src_ip &&
-		    p_sic->dest_ip == sic.dest_ip) {
+		    p_sic->src_ip.ip == sic.src_ip.ip &&
+		    p_sic->dest_ip.ip == sic.dest_ip.ip) {
 			conn->hits++;
 			if (conn->offloaded == 0) {
 				if (conn->hits >= offload_at_pkts) {
@@ -685,8 +685,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					if ((ret == 0) || (ret == -EADDRINUSE)) {
 						conn->offloaded = 1;
 						fc_msg.proto = sic.protocol;
-						fc_msg.src_saddr = sic.src_ip;
-						fc_msg.dst_saddr = sic.dest_ip_xlate;
+						fc_msg.src_saddr = sic.src_ip.ip;
+						fc_msg.dst_saddr = sic.dest_ip_xlate.ip;
 						fc_msg.sport = sic.src_port;
 						fc_msg.dport = sic.dest_port_xlate;
 						memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
@@ -720,26 +720,26 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	 * Get the net device and MAC addresses that correspond to the various source and
 	 * destination host addresses.
 	 */
-	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip, &src_dev, sic.src_mac)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip.ip, &src_dev, sic.src_mac)) {
 		DEBUG_TRACE("failed to find MAC address for src IP: %pI4\n", &sic.src_ip);
 		return NF_ACCEPT;
 	}
 
-	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip_xlate, &dev, sic.src_mac_xlate)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.src_ip_xlate.ip, &dev, sic.src_mac_xlate)) {
 		DEBUG_TRACE("failed to find MAC address for xlate src IP: %pI4\n", &sic.src_ip_xlate);
 		goto done1;
 	}
 
 	dev_put(dev);
 
-	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip, &dev, sic.dest_mac)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip.ip, &dev, sic.dest_mac)) {
 		DEBUG_TRACE("failed to find MAC address for dest IP: %pI4\n", &sic.dest_ip);
 		goto done1;
 	}
 
 	dev_put(dev);
 
-	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip_xlate, &dest_dev, sic.dest_mac_xlate)) {
+	if (!fast_classifier_find_dev_and_mac_addr(sic.dest_ip_xlate.ip, &dest_dev, sic.dest_mac_xlate)) {
 		DEBUG_TRACE("failed to find MAC address for xlate dest IP: %pI4\n", &sic.dest_ip_xlate);
 		goto done1;
 	}
@@ -818,7 +818,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	memcpy(conn->smac, sic.src_mac, ETH_ALEN);
 	memcpy(conn->dmac, sic.dest_mac_xlate, ETH_ALEN);
 
-	p_sic = kmalloc(sizeof(struct sfe_ipv4_create), GFP_ATOMIC);
+	p_sic = kmalloc(sizeof(struct sfe_connection_create), GFP_ATOMIC);
 	if (p_sic == NULL) {
 		printk(KERN_CRIT "ERROR: no memory for sfe\n");
 		kfree(conn);
@@ -831,8 +831,8 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	sfe_connections_size++;
 	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", sfe_connections_size);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	key = fc_conn_hash(conn->sic->src_ip,
-			   conn->sic->dest_ip,
+	key = fc_conn_hash(conn->sic->src_ip.ip,
+			   conn->sic->dest_ip.ip,
 			   conn->sic->src_port,
 			   conn->sic->dest_port);
 	hash_add(fc_conn_ht, &conn->hl, key);
@@ -865,23 +865,23 @@ done1:
  * fast_classifier_update_mark()
  *	updates the mark for a fast-classifier connection
  */
-static void fast_classifier_update_mark(struct sfe_ipv4_mark *mark)
+static void fast_classifier_update_mark(struct sfe_connection_mark *mark)
 {
 	struct sfe_connection *conn;
-	struct sfe_ipv4_create *p_sic;
+	struct sfe_connection_create *p_sic;
 	unsigned long flags;
 	u32 key;
 	struct hlist_node *node;
 
 	spin_lock_irqsave(&sfe_connections_lock, flags);
-	key = fc_conn_hash(mark->src_ip, mark->dest_ip, mark->src_port,  mark->dest_port);
+	key = fc_conn_hash(mark->src_ip.ip, mark->dest_ip.ip, mark->src_port,  mark->dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		if (p_sic->protocol == mark->protocol &&
 		    p_sic->src_port == mark->src_port &&
 		    p_sic->dest_port == mark->dest_port &&
-		    p_sic->src_ip == mark->src_ip &&
-		    p_sic->dest_ip == mark->dest_ip) {
+		    p_sic->src_ip.ip == mark->src_ip.ip &&
+		    p_sic->dest_ip.ip == mark->dest_ip.ip) {
 
 			p_sic->mark = mark->mark;
 
@@ -906,11 +906,11 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
 	struct nf_ct_event *item = ptr;
 #endif
-	struct sfe_ipv4_destroy sid;
+	struct sfe_connection_destroy sid;
 	struct nf_conn *ct = item->ct;
 	struct nf_conntrack_tuple orig_tuple;
 	struct sfe_connection *conn;
-	struct sfe_ipv4_create *p_sic;
+	struct sfe_connection_create *p_sic;
 	int sfe_found_match = 0;
 	unsigned long flags;
 	struct fast_classifier_tuple fc_msg;
@@ -946,12 +946,12 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	 * Check for an updated mark
 	 */
 	if ((events & (1 << IPCT_MARK)) && (ct->mark != 0)) {
-		struct sfe_ipv4_mark mark;
+		struct sfe_connection_mark mark;
 		orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
 
 		mark.protocol = (int32_t)orig_tuple.dst.protonum;
-		mark.src_ip = (__be32)orig_tuple.src.u3.ip;
-		mark.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+		mark.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+		mark.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 		switch (mark.protocol) {
 		case IPPROTO_TCP:
 			mark.src_port = orig_tuple.src.u.tcp.port;
@@ -985,8 +985,8 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	 * Extract information from the conntrack connection.  We're only interested
 	 * in nominal connection information (i.e. we're ignoring any NAT information).
 	 */
-	sid.src_ip = (__be32)orig_tuple.src.u3.ip;
-	sid.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+	sid.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+	sid.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
 	switch (sid.protocol) {
 	case IPPROTO_TCP:
@@ -1009,11 +1009,11 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	 * XXX: this may need to be optimized
 	 */
 	DEBUG_TRACE("INFO: want to clean up: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
-			sid.protocol, sid.src_ip, sid.dest_ip,
+			sid.protocol, sid.src_ip.ip, sid.dest_ip.ip,
 			sid.src_port, sid.dest_port);
 	spin_lock_irqsave(&sfe_connections_lock, flags);
 
-	key = fc_conn_hash(sid.src_ip, sid.dest_ip, sid.src_port, sid.dest_port);
+	key = fc_conn_hash(sid.src_ip.ip, sid.dest_ip.ip, sid.src_port, sid.dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d...",
@@ -1023,11 +1023,11 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 		if (p_sic->protocol == sid.protocol &&
 		    p_sic->src_port == sid.src_port &&
 		    p_sic->dest_port == sid.dest_port &&
-		    p_sic->src_ip == sid.src_ip &&
-		    p_sic->dest_ip == sid.dest_ip) {
+		    p_sic->src_ip.ip == sid.src_ip.ip &&
+		    p_sic->dest_ip.ip == sid.dest_ip.ip) {
 			fc_msg.proto = p_sic->protocol;
-			fc_msg.src_saddr = p_sic->src_ip;
-			fc_msg.dst_saddr = p_sic->dest_ip_xlate;
+			fc_msg.src_saddr = p_sic->src_ip.ip;
+			fc_msg.dst_saddr = p_sic->dest_ip_xlate.ip;
 			fc_msg.sport = p_sic->src_port;
 			fc_msg.dport = p_sic->dest_port_xlate;
 			memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
@@ -1042,7 +1042,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 
 	if (sfe_found_match) {
 		DEBUG_TRACE("INFO: connection over proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
-				p_sic->protocol, p_sic->src_ip, p_sic->dest_ip,
+				p_sic->protocol, p_sic->src_ip.ip, p_sic->dest_ip.ip,
 				p_sic->src_port, p_sic->dest_port);
 		kfree(conn->sic);
 		hash_del(&conn->hl);
@@ -1097,7 +1097,7 @@ static struct nf_hook_ops fast_classifier_ipv4_ops_post_routing[] __read_mostly 
  * fast_classifier_sync_rule()
  *	Synchronize a connection's state.
  */
-static void fast_classifier_sync_rule(struct sfe_ipv4_sync *sis)
+static void fast_classifier_sync_rule(struct sfe_connection_sync *sis)
 {
 	struct nf_conntrack_tuple_hash *h;
 	struct nf_conntrack_tuple tuple;
@@ -1108,11 +1108,11 @@ static void fast_classifier_sync_rule(struct sfe_ipv4_sync *sis)
 	 * Create a tuple so as to be able to look up a connection
 	 */
 	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u3.ip = sis->src_ip;
+	tuple.src.u3.ip = sis->src_ip.ip;
 	tuple.src.u.all = (__be16)sis->src_port;
 	tuple.src.l3num = AF_INET;
 
-	tuple.dst.u3.ip = sis->dest_ip;
+	tuple.dst.u3.ip = sis->dest_ip.ip;
 	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
 	tuple.dst.protonum = (uint8_t)sis->protocol;
 	tuple.dst.u.all = (__be16)sis->dest_port;

@@ -16,7 +16,7 @@
 #include <linux/etherdevice.h>
 
 #include "sfe.h"
-#include "sfe_ipv4.h"
+#include "sfe_cm.h"
 
 /*
  * By default Linux IP header and transport layer header structures are
@@ -385,7 +385,7 @@ struct sfe_ipv4 {
 					/* Tail of the list of all connections */
 	unsigned int num_connections;	/* Number of connections */
 	struct timer_list timer;	/* Timer used for periodic sync ops */
-	sfe_ipv4_sync_rule_callback_t __rcu sync_rule_callback;
+	sfe_sync_rule_callback_t __rcu sync_rule_callback;
 					/* Callback function registered by a connection manager for stats syncing */
 	struct sfe_ipv4_connection *conn_hash[SFE_IPV4_CONNECTION_HASH_SIZE];
 					/* Connection hash table */
@@ -926,15 +926,15 @@ static inline struct sfe_ipv4_connection *sfe_ipv4_find_sfe_ipv4_connection(stru
  *
  * Will take hash lock upon entry
  */
-void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark)
+void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark)
 {
 	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
 
 	spin_lock(&si->lock);
 	c = sfe_ipv4_find_sfe_ipv4_connection(si, mark->protocol,
-					      mark->src_ip, mark->src_port,
-					      mark->dest_ip, mark->dest_port);
+					      mark->src_ip.ip, mark->src_port,
+					      mark->dest_ip.ip, mark->dest_port);
 	if (c) {
 		DEBUG_TRACE("Matching connection found for mark, "
 			    "setting from %08x to %08x\n",
@@ -1032,7 +1032,7 @@ static void sfe_ipv4_remove_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_
  * already held or isn't required.
  */
 static void sfe_ipv4_gen_sync_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c,
-						  struct sfe_ipv4_sync *sis, uint64_t now_jiffies)
+						  struct sfe_connection_sync *sis, uint64_t now_jiffies)
 {
 	struct sfe_ipv4_connection_match *original_cm;
 	struct sfe_ipv4_connection_match *reply_cm;
@@ -1040,9 +1040,10 @@ static void sfe_ipv4_gen_sync_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sf
 	/*
 	 * Fill in the update message.
 	 */
+	sis->is_v6 = 0;
 	sis->protocol = c->protocol;
-	sis->src_ip = c->src_ip;
-	sis->dest_ip = c->dest_ip;
+	sis->src_ip.ip = c->src_ip;
+	sis->dest_ip.ip = c->dest_ip;
 	sis->src_port = c->src_port;
 	sis->dest_port = c->dest_port;
 
@@ -1134,10 +1135,10 @@ static bool sfe_ipv4_decrement_sfe_ipv4_connection_iterator(struct sfe_ipv4 *si,
  */
 static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c)
 {
-	struct sfe_ipv4_sync sis;
+	struct sfe_connection_sync sis;
 	uint64_t now_jiffies;
 	bool pending_free = false;
-	sfe_ipv4_sync_rule_callback_t sync_rule_callback;
+	sfe_sync_rule_callback_t sync_rule_callback;
 
 	rcu_read_lock();
 	spin_lock(&si->lock);
@@ -2318,7 +2319,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 
 static void
 sfe_ipv4_update_tcp_state(struct sfe_ipv4_connection *c,
-			  struct sfe_ipv4_create *sic)
+			  struct sfe_connection_create *sic)
 {
 	struct sfe_ipv4_connection_match *orig_cm;
 	struct sfe_ipv4_connection_match *repl_cm;
@@ -2355,7 +2356,7 @@ sfe_ipv4_update_tcp_state(struct sfe_ipv4_connection *c,
 	/* update match flags */
 	orig_cm->flags &= ~SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 	repl_cm->flags &= ~SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
-	if (sic->flags & SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK) {
+	if (sic->flags & SFE_CREATE_FLAG_NO_SEQ_CHECK) {
 		orig_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 		repl_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 	}
@@ -2363,7 +2364,7 @@ sfe_ipv4_update_tcp_state(struct sfe_ipv4_connection *c,
 
 static void
 sfe_ipv4_update_protocol_state(struct sfe_ipv4_connection *c,
-			       struct sfe_ipv4_create *sic)
+			       struct sfe_connection_create *sic)
 {
 	switch (sic->protocol) {
 	case IPPROTO_TCP:
@@ -2372,7 +2373,7 @@ sfe_ipv4_update_protocol_state(struct sfe_ipv4_connection *c,
 	}
 }
 
-void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic)
+void sfe_ipv4_update_rule(struct sfe_connection_create *sic)
 {
 	struct sfe_ipv4_connection *c;
 	struct sfe_ipv4 *si = &__si;
@@ -2381,9 +2382,9 @@ void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic)
 
 	c = sfe_ipv4_find_sfe_ipv4_connection(si,
 					      sic->protocol,
-					      sic->src_ip,
+					      sic->src_ip.ip,
 					      sic->src_port,
-					      sic->dest_ip,
+					      sic->dest_ip.ip,
 					      sic->dest_port);
 	if (c != NULL) {
 		sfe_ipv4_update_protocol_state(c, sic);
@@ -2396,7 +2397,7 @@ void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic)
  * sfe_ipv4_create_rule()
  *	Create a forwarding rule.
  */
-int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
+int sfe_ipv4_create_rule(struct sfe_connection_create *sic)
 {
 	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
@@ -2422,9 +2423,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	 */
 	c = sfe_ipv4_find_sfe_ipv4_connection(si,
 					      sic->protocol,
-					      sic->src_ip,
+					      sic->src_ip.ip,
 					      sic->src_port,
-					      sic->dest_ip,
+					      sic->dest_ip.ip,
 					      sic->dest_port);
 	if (c != NULL) {
 		si->connection_create_collisions++;
@@ -2440,8 +2441,8 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		DEBUG_TRACE("connection already exists - mark: %08x, p: %d\n"
 			    "  s: %s:%pM:%pI4:%u, d: %s:%pM:%pI4:%u\n",
 			    sic->mark, sic->protocol,
-			    sic->src_dev->name, sic->src_mac, &sic->src_ip, ntohs(sic->src_port),
-			    sic->dest_dev->name, sic->dest_mac, &sic->dest_ip, ntohs(sic->dest_port));
+			    sic->src_dev->name, sic->src_mac, &sic->src_ip.ip, ntohs(sic->src_port),
+			    sic->dest_dev->name, sic->dest_mac, &sic->dest_ip.ip, ntohs(sic->dest_port));
 		return -EADDRINUSE;
 	}
 
@@ -2477,13 +2478,13 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	 */
 	original_cm->match_dev = src_dev;
 	original_cm->match_protocol = sic->protocol;
-	original_cm->match_src_ip = sic->src_ip;
+	original_cm->match_src_ip = sic->src_ip.ip;
 	original_cm->match_src_port = sic->src_port;
-	original_cm->match_dest_ip = sic->dest_ip;
+	original_cm->match_dest_ip = sic->dest_ip.ip;
 	original_cm->match_dest_port = sic->dest_port;
-	original_cm->xlate_src_ip = sic->src_ip_xlate;
+	original_cm->xlate_src_ip = sic->src_ip_xlate.ip;
 	original_cm->xlate_src_port = sic->src_port_xlate;
-	original_cm->xlate_dest_ip = sic->dest_ip_xlate;
+	original_cm->xlate_dest_ip = sic->dest_ip_xlate.ip;
 	original_cm->xlate_dest_port = sic->dest_port_xlate;
 	original_cm->rx_packet_count = 0;
 	original_cm->rx_packet_count64 = 0;
@@ -2525,13 +2526,13 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	 */
 	reply_cm->match_dev = dest_dev;
 	reply_cm->match_protocol = sic->protocol;
-	reply_cm->match_src_ip = sic->dest_ip_xlate;
+	reply_cm->match_src_ip = sic->dest_ip_xlate.ip;
 	reply_cm->match_src_port = sic->dest_port_xlate;
-	reply_cm->match_dest_ip = sic->src_ip_xlate;
+	reply_cm->match_dest_ip = sic->src_ip_xlate.ip;
 	reply_cm->match_dest_port = sic->src_port_xlate;
-	reply_cm->xlate_src_ip = sic->dest_ip;
+	reply_cm->xlate_src_ip = sic->dest_ip.ip;
 	reply_cm->xlate_src_port = sic->dest_port;
-	reply_cm->xlate_dest_ip = sic->src_ip;
+	reply_cm->xlate_dest_ip = sic->src_ip.ip;
 	reply_cm->xlate_dest_port = sic->src_port;
 	reply_cm->rx_packet_count = 0;
 	reply_cm->rx_packet_count64 = 0;
@@ -2569,25 +2570,25 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 	}
 
 
-	if (sic->dest_ip != sic->dest_ip_xlate || sic->dest_port != sic->dest_port_xlate) {
+	if (sic->dest_ip.ip != sic->dest_ip_xlate.ip || sic->dest_port != sic->dest_port_xlate) {
 		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST;
 		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC;
 	}
 
-	if (sic->src_ip != sic->src_ip_xlate || sic->src_port != sic->src_port_xlate) {
+	if (sic->src_ip.ip != sic->src_ip_xlate.ip || sic->src_port != sic->src_port_xlate) {
 		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC;
 		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST;
 	}
 
 	c->protocol = sic->protocol;
-	c->src_ip = sic->src_ip;
-	c->src_ip_xlate = sic->src_ip_xlate;
+	c->src_ip = sic->src_ip.ip;
+	c->src_ip_xlate = sic->src_ip_xlate.ip;
 	c->src_port = sic->src_port;
 	c->src_port_xlate = sic->src_port_xlate;
 	c->original_dev = src_dev;
 	c->original_match = original_cm;
-	c->dest_ip = sic->dest_ip;
-	c->dest_ip_xlate = sic->dest_ip_xlate;
+	c->dest_ip = sic->dest_ip.ip;
+	c->dest_ip_xlate = sic->dest_ip_xlate.ip;
 	c->dest_port = sic->dest_port;
 	c->dest_port_xlate = sic->dest_port_xlate;
 	c->reply_dev = dest_dev;
@@ -2617,7 +2618,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		reply_cm->protocol_state.tcp.max_win = sic->dest_td_max_window ? sic->dest_td_max_window : 1;
 		reply_cm->protocol_state.tcp.end = sic->dest_td_end;
 		reply_cm->protocol_state.tcp.max_end = sic->dest_td_max_end;
-		if (sic->flags & SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK) {
+		if (sic->flags & SFE_CREATE_FLAG_NO_SEQ_CHECK) {
 			original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 			reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 		}
@@ -2638,9 +2639,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
 		   "  d: %s:%pM(%pM):%pI4(%pI4):%u(%u)\n",
 		   sic->mark, sic->protocol,
 		   sic->src_dev->name, sic->src_mac, sic->src_mac_xlate,
-		   &sic->src_ip, &sic->src_ip_xlate, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
+		   &sic->src_ip.ip, &sic->src_ip_xlate.ip, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
 		   dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,
-		   &sic->dest_ip, &sic->dest_ip_xlate, ntohs(sic->dest_port), ntohs(sic->dest_port_xlate));
+		   &sic->dest_ip.ip, &sic->dest_ip_xlate.ip, ntohs(sic->dest_port), ntohs(sic->dest_port_xlate));
 
 	return 0;
 }
@@ -2649,7 +2650,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic)
  * sfe_ipv4_destroy_rule()
  *	Destroy a forwarding rule.
  */
-void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid)
+void sfe_ipv4_destroy_rule(struct sfe_connection_destroy *sid)
 {
 	struct sfe_ipv4 *si = &__si;
 	struct sfe_ipv4_connection *c;
@@ -2661,8 +2662,8 @@ void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid)
 	 * Check to see if we have a flow that matches the rule we're trying
 	 * to destroy.  If there isn't then we can't destroy it.
 	 */
-	c = sfe_ipv4_find_sfe_ipv4_connection(si, sid->protocol, sid->src_ip, sid->src_port,
-					      sid->dest_ip, sid->dest_port);
+	c = sfe_ipv4_find_sfe_ipv4_connection(si, sid->protocol, sid->src_ip.ip, sid->src_port,
+					      sid->dest_ip.ip, sid->dest_port);
 	if (!c) {
 		si->connection_destroy_misses++;
 		spin_unlock_bh(&si->lock);
@@ -2688,15 +2689,15 @@ void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid)
 	local_bh_enable();
 
 	DEBUG_INFO("connection destroyed - p: %d, s: %pI4:%u, d: %pI4:%u\n",
-		   sid->protocol, &sid->src_ip, ntohs(sid->src_port),
-		   &sid->dest_ip, ntohs(sid->dest_port));
+		   sid->protocol, &sid->src_ip.ip, ntohs(sid->src_port),
+		   &sid->dest_ip.ip, ntohs(sid->dest_port));
 }
 
 /*
  * sfe_ipv4_register_sync_rule_callback()
  *	Register a callback for rule synchronization.
  */
-void sfe_ipv4_register_sync_rule_callback(sfe_ipv4_sync_rule_callback_t sync_rule_callback)
+void sfe_ipv4_register_sync_rule_callback(sfe_sync_rule_callback_t sync_rule_callback)
 {
 	struct sfe_ipv4 *si = &__si;
 
@@ -2811,7 +2812,7 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 	struct sfe_ipv4 *si = (struct sfe_ipv4 *)arg;
 	uint64_t now_jiffies;
 	int quota;
-	sfe_ipv4_sync_rule_callback_t sync_rule_callback;
+	sfe_sync_rule_callback_t sync_rule_callback;
 
 	now_jiffies = get_jiffies_64();
 
@@ -2837,7 +2838,7 @@ static void sfe_ipv4_periodic_sync(unsigned long arg)
 		struct sfe_ipv4_connection_match *cm;
 		struct sfe_ipv4_connection_match *counter_cm;
 		struct sfe_ipv4_connection *c;
-		struct sfe_ipv4_sync sis;
+		struct sfe_connection_sync sis;
 
 		cm = si->active_head;
 		if (!cm) {

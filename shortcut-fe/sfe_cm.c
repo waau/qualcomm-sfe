@@ -2,7 +2,7 @@
  * sfe-cm.c
  *	Shortcut forwarding engine connection manager.
  *
- * Copyright (c) 2013 Qualcomm Atheros, Inc.
+ * Copyright (c) 2013-2015 Qualcomm Atheros, Inc.
  *
  * All Rights Reserved.
  * Qualcomm Atheros Confidential and Proprietary.
@@ -21,7 +21,7 @@
 #include <linux/if_bridge.h>
 
 #include "sfe.h"
-#include "sfe_ipv4.h"
+#include "sfe_cm.h"
 #include "sfe_backport.h"
 
 /*
@@ -119,66 +119,83 @@ int sfe_cm_recv(struct sk_buff *skb)
  * structure, obtain the hardware address.  This means this function also
  * works if the neighbours are routers too.
  */
-static bool sfe_cm_find_dev_and_mac_addr(uint32_t addr, struct net_device **dev, uint8_t *mac_addr)
+static bool sfe_cm_find_dev_and_mac_addr(sfe_ip_addr_t *addr, struct net_device **dev, uint8_t *mac_addr, int is_v4)
 {
 	struct neighbour *neigh;
 	struct rtable *rt;
 	struct dst_entry *dst;
 	struct net_device *mac_dev;
 
+	if (unlikely(!is_v4)) {
+		/*
+		 * will support IPv6 soon
+		 */
+		goto ret_fail;
+	}
+
 	/*
 	 * Look up the rtable entry for the IP address then get the hardware
 	 * address from its neighbour structure.  This means this work when the
 	 * neighbours are routers too.
 	 */
-	rt = ip_route_output(&init_net, addr, 0, 0, 0);
+	rt = ip_route_output(&init_net, addr->ip, 0, 0, 0);
 	if (unlikely(IS_ERR(rt))) {
-		return false;
+		goto ret_fail;
 	}
 
 	dst = (struct dst_entry *)rt;
 
 	rcu_read_lock();
-	neigh = dst_neigh_lookup(dst, &addr);
+	neigh = dst_neigh_lookup(dst, addr);
 	if (unlikely(!neigh)) {
 		rcu_read_unlock();
 		dst_release(dst);
-		return false;
+		goto ret_fail;
 	}
 
 	if (unlikely(!(neigh->nud_state & NUD_VALID))) {
-		neigh_release(neigh);
 		rcu_read_unlock();
+		neigh_release(neigh);
 		dst_release(dst);
-		return false;
+		goto ret_fail;
 	}
 
 	mac_dev = neigh->dev;
 	if (!mac_dev) {
-		neigh_release(neigh);
 		rcu_read_unlock();
+		neigh_release(neigh);
 		dst_release(dst);
-		return false;
+		goto ret_fail;
 	}
 
 	memcpy(mac_addr, neigh->ha, (size_t)mac_dev->addr_len);
 
 	dev_hold(mac_dev);
 	*dev = mac_dev;
-	neigh_release(neigh);
 	rcu_read_unlock();
+	neigh_release(neigh);
 	dst_release(dst);
 
 	return true;
+
+ret_fail:
+	if (is_v4) {
+		DEBUG_TRACE("failed to find MAC address for IP: %pI4\n", &addr->ip);
+
+	} else {
+		DEBUG_TRACE("failed to find MAC address for IP: %pI6\n", addr->ip6);
+	}
+
+	return false;
 }
 
 /*
- * sfe_cm_ipv4_post_routing_hook()
+ * sfe_cm_post_routing()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
  */
-sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
+static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 {
-	struct sfe_ipv4_create sic;
+	struct sfe_connection_create sic;
 	struct net_device *in;
 	struct nf_conn *ct;
 	enum ip_conntrack_info ctinfo;
@@ -251,20 +268,27 @@ sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 	/*
 	 * Get addressing information, non-NAT first
 	 */
-	sic.src_ip = (__be32)orig_tuple.src.u3.ip;
-	sic.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+	if (likely(is_v4)) {
+		sic.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+		sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
-	if (ipv4_is_multicast(sic.src_ip) || ipv4_is_multicast(sic.dest_ip)) {
-		DEBUG_TRACE("multicast address\n");
+		if (ipv4_is_multicast(sic.src_ip.ip) || ipv4_is_multicast(sic.dest_ip.ip)) {
+			DEBUG_TRACE("multicast address\n");
+			return NF_ACCEPT;
+		}
+
+		/*
+		 * NAT'ed addresses - note these are as seen from the 'reply' direction
+		 * When NAT does not apply to this connection these will be identical to the above.
+		 */
+		sic.src_ip_xlate.ip = (__be32)reply_tuple.dst.u3.ip;
+		sic.dest_ip_xlate.ip = (__be32)reply_tuple.src.u3.ip;
+	} else {
+		/*
+		 * will support soon
+		*/
 		return NF_ACCEPT;
 	}
-
-	/*
-	 * NAT'ed addresses - note these are as seen from the 'reply' direction
-	 * When NAT does not apply to this connection these will be identical to the above.
-	 */
-	sic.src_ip_xlate = (__be32)reply_tuple.dst.u3.ip;
-	sic.dest_ip_xlate = (__be32)reply_tuple.src.u3.ip;
 
 	sic.flags = 0;
 
@@ -285,7 +309,7 @@ sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 		if (nf_ct_tcp_no_window_check
 		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
 		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
-			sic.flags |= SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK;
+			sic.flags |= SFE_CREATE_FLAG_NO_SEQ_CHECK;
 		}
 
 		/*
@@ -328,27 +352,23 @@ sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 	 * Get the net device and MAC addresses that correspond to the various source and
 	 * destination host addresses.
 	 */
-	if (!sfe_cm_find_dev_and_mac_addr(sic.src_ip, &src_dev, sic.src_mac)) {
-		DEBUG_TRACE("failed to find MAC address for src IP: %pI4\n", &sic.src_ip);
+	if (!sfe_cm_find_dev_and_mac_addr(&sic.src_ip, &src_dev, sic.src_mac, is_v4)) {
 		return NF_ACCEPT;
 	}
 
-	if (!sfe_cm_find_dev_and_mac_addr(sic.src_ip_xlate, &dev, sic.src_mac_xlate)) {
-		DEBUG_TRACE("failed to find MAC address for xlate src IP: %pI4\n", &sic.src_ip_xlate);
+	if (!sfe_cm_find_dev_and_mac_addr(&sic.src_ip_xlate, &dev, sic.src_mac_xlate, is_v4)) {
 		goto done1;
 	}
 
 	dev_put(dev);
 
-	if (!sfe_cm_find_dev_and_mac_addr(sic.dest_ip, &dev, sic.dest_mac)) {
-		DEBUG_TRACE("failed to find MAC address for dest IP: %pI4\n", &sic.dest_ip);
+	if (!sfe_cm_find_dev_and_mac_addr(&sic.dest_ip, &dev, sic.dest_mac, is_v4)) {
 		goto done1;
 	}
 
 	dev_put(dev);
 
-	if (!sfe_cm_find_dev_and_mac_addr(sic.dest_ip_xlate, &dest_dev, sic.dest_mac_xlate)) {
-		DEBUG_TRACE("failed to find MAC address for xlate dest IP: %pI4\n", &sic.dest_ip_xlate);
+	if (!sfe_cm_find_dev_and_mac_addr(&sic.dest_ip_xlate, &dest_dev, sic.dest_mac_xlate, is_v4)) {
 		goto done1;
 	}
 
@@ -433,6 +453,15 @@ done1:
 	return NF_ACCEPT;
 }
 
+/*
+ * sfe_cm_ipv4_post_routing_hook()
+ *	Called for packets about to leave the box - either locally generated or forwarded from another interface
+ */
+sfe_cm_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
+{
+	return sfe_cm_post_routing(skb, true);
+}
+
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 /*
  * sfe_cm_conntrack_event()
@@ -448,7 +477,7 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
 	struct nf_ct_event *item = ptr;
 #endif
-	struct sfe_ipv4_destroy sid;
+	struct sfe_connection_destroy sid;
 	struct nf_conn *ct = item->ct;
 	struct nf_conntrack_tuple orig_tuple;
 
@@ -491,8 +520,8 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	 * Extract information from the conntrack connection.  We're only interested
 	 * in nominal connection information (i.e. we're ignoring any NAT information).
 	 */
-	sid.src_ip = (__be32)orig_tuple.src.u3.ip;
-	sid.dest_ip = (__be32)orig_tuple.dst.u3.ip;
+	sid.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
+	sid.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
 	switch (sid.protocol) {
 	case IPPROTO_TCP:
@@ -536,11 +565,11 @@ static struct nf_ct_event_notifier sfe_cm_conntrack_notifier = {
  * Note: see include/linux/netfilter_ipv4.h for info related to priority levels.
  * We want to examine packets after NAT translation and any ALG processing.
  */
-static struct nf_hook_ops sfe_cm_ipv4_ops_post_routing[] __read_mostly = {
+static struct nf_hook_ops sfe_cm_ops_post_routing[] __read_mostly = {
 	{
 		.hook = __sfe_cm_ipv4_post_routing_hook,
 		.owner = THIS_MODULE,
-		.pf = PF_INET,
+		.pf = NFPROTO_IPV4,
 		.hooknum = NF_INET_POST_ROUTING,
 		.priority = NF_IP_PRI_NAT_SRC + 1,
 	},
@@ -550,22 +579,29 @@ static struct nf_hook_ops sfe_cm_ipv4_ops_post_routing[] __read_mostly = {
  * sfe_cm_sync_rule()
  *	Synchronize a connection's state.
  */
-static void sfe_cm_sync_rule(struct sfe_ipv4_sync *sis)
+static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 {
 	struct nf_conntrack_tuple_hash *h;
 	struct nf_conntrack_tuple tuple;
 	struct nf_conn *ct;
 	SFE_NF_CONN_ACCT(acct);
 
+	if (sis->is_v6) {
+		/*
+		 * will support soon
+		 */
+		return;
+	}
+
 	/*
 	 * Create a tuple so as to be able to look up a connection
 	 */
 	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u3.ip = sis->src_ip;
+	tuple.src.u3.ip = sis->src_ip.ip;
 	tuple.src.u.all = (__be16)sis->src_port;
 	tuple.src.l3num = AF_INET;
 
-	tuple.dst.u3.ip = sis->dest_ip;
+	tuple.dst.u3.ip = sis->dest_ip.ip;
 	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
 	tuple.dst.protonum = (uint8_t)sis->protocol;
 	tuple.dst.u.all = (__be16)sis->dest_port;
@@ -591,7 +627,9 @@ static void sfe_cm_sync_rule(struct sfe_ipv4_sync *sis)
 	 * Only update if this is not a fixed timeout
 	 */
 	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
+		spin_lock_bh(&ct->lock);
 		ct->timeout.expires += sis->delta_jiffies;
+		spin_unlock_bh(&ct->lock);
 	}
 
 	acct = nf_conn_acct_find(ct);
@@ -692,7 +730,7 @@ static int __init sfe_cm_init(void)
 	/*
 	 * Register our netfilter hooks.
 	 */
-	result = nf_register_hooks(sfe_cm_ipv4_ops_post_routing, ARRAY_SIZE(sfe_cm_ipv4_ops_post_routing));
+	result = nf_register_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
 		goto exit2;
@@ -726,7 +764,7 @@ static int __init sfe_cm_init(void)
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 exit3:
 #endif
-	nf_unregister_hooks(sfe_cm_ipv4_ops_post_routing, ARRAY_SIZE(sfe_cm_ipv4_ops_post_routing));
+	nf_unregister_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 
 exit2:
 	unregister_inetaddr_notifier(&sc->inet_notifier);
@@ -770,7 +808,7 @@ static void __exit sfe_cm_exit(void)
 	nf_conntrack_unregister_notifier(&init_net, &sfe_cm_conntrack_notifier);
 
 #endif
-	nf_unregister_hooks(sfe_cm_ipv4_ops_post_routing, ARRAY_SIZE(sfe_cm_ipv4_ops_post_routing));
+	nf_unregister_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);

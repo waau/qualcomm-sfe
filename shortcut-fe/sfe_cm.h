@@ -1,33 +1,45 @@
 /*
- * sfe_ipv4.h
+ * sfe_cm.h
  *	Shortcut forwarding engine.
  *
- * Copyright (c) 2013 Qualcomm Atheros, Inc.
+ * Copyright (c) 2013-2015 Qualcomm Atheros, Inc.
  *
  * All Rights Reserved.
  * Qualcomm Atheros Confidential and Proprietary.
  */
 
 /*
- * IPv4 connection flags.
+ * connection flags.
  */
-#define SFE_IPV4_CREATE_FLAG_NO_SEQ_CHECK 0x1
+#define SFE_CREATE_FLAG_NO_SEQ_CHECK 0x1
 					/* Indicates that we should not check sequence numbers */
 
 /*
- * IPv4 connection creation structure.
+ * IPv6 address structure
  */
-struct sfe_ipv4_create {
+struct sfe_ipv6_addr {
+	__be32 addr[4];
+};
+
+typedef union {
+	__be32			ip;
+	struct sfe_ipv6_addr	ip6[1];
+} sfe_ip_addr_t;
+
+/*
+ * connection creation structure.
+ */
+struct sfe_connection_create {
 	int protocol;
 	struct net_device *src_dev;
 	struct net_device *dest_dev;
 	uint32_t flags;
 	uint32_t src_mtu;
 	uint32_t dest_mtu;
-	__be32 src_ip;
-	__be32 src_ip_xlate;
-	__be32 dest_ip;
-	__be32 dest_ip_xlate;
+	sfe_ip_addr_t src_ip;
+	sfe_ip_addr_t src_ip_xlate;
+	sfe_ip_addr_t dest_ip;
+	sfe_ip_addr_t dest_ip_xlate;
 	__be16 src_port;
 	__be16 src_port_xlate;
 	__be16 dest_port;
@@ -48,29 +60,30 @@ struct sfe_ipv4_create {
 };
 
 /*
- * IPv4 connection destruction structure.
+ * connection destruction structure.
  */
-struct sfe_ipv4_destroy {
+struct sfe_connection_destroy {
 	int protocol;
-	__be32 src_ip;
-	__be32 dest_ip;
+	sfe_ip_addr_t src_ip;
+	sfe_ip_addr_t dest_ip;
 	__be16 src_port;
 	__be16 dest_port;
 };
 
 /*
- * Structure used to sync IPv4 connection stats/state back within the system.
+ * Structure used to sync connection stats/state back within the system.
  *
  * NOTE: The addresses here are NON-NAT addresses, i.e. the true endpoint addressing.
  * 'src' is the creator of the connection.
  */
-struct sfe_ipv4_sync {
+struct sfe_connection_sync {
 	struct net_device *src_dev;
 	struct net_device *dest_dev;
+	int is_v6;			/* Is it for ipv6? */
 	int protocol;			/* IP protocol number (IPPROTO_...) */
-	__be32 src_ip;			/* Non-NAT source address, i.e. the creator of the connection */
+	sfe_ip_addr_t src_ip;		/* Non-NAT source address, i.e. the creator of the connection */
 	__be16 src_port;		/* Non-NAT source port */
-	__be32 dest_ip;			/* Non-NAT destination address, i.e. to whom the connection was created */
+	sfe_ip_addr_t dest_ip;	/* Non-NAT destination address, i.e. to whom the connection was created */
 	__be16 dest_port;		/* Non-NAT destination port */
 	uint32_t src_td_max_window;
 	uint32_t src_td_end;
@@ -90,26 +103,29 @@ struct sfe_ipv4_sync {
 };
 
 /*
- * Type used for a sync rule callback.
+ * connection mark structure
  */
-typedef void (*sfe_ipv4_sync_rule_callback_t)(struct sfe_ipv4_sync *);
-
-extern int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb);
-extern int sfe_ipv4_create_rule(struct sfe_ipv4_create *sic);
-extern void sfe_ipv4_destroy_rule(struct sfe_ipv4_destroy *sid);
-extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
-extern void sfe_ipv4_register_sync_rule_callback(sfe_ipv4_sync_rule_callback_t callback);
-extern void sfe_ipv4_update_rule(struct sfe_ipv4_create *sic);
-
-/*
- * IPv4 connection mark structure
- */
-struct sfe_ipv4_mark {
+struct sfe_connection_mark {
 	int protocol;
-	__be32 src_ip;
-	__be32 dest_ip;
+	sfe_ip_addr_t src_ip;
+	sfe_ip_addr_t dest_ip;
 	__be16 src_port;
 	__be16 dest_port;
 	uint32_t mark;
 };
-extern void sfe_ipv4_mark_rule(struct sfe_ipv4_mark *mark);
+
+/*
+ * Type used for a sync rule callback.
+ */
+typedef void (*sfe_sync_rule_callback_t)(struct sfe_connection_sync *);
+
+/*
+ * IPv4 APIs used by connection manager
+ */
+extern int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb);
+extern int sfe_ipv4_create_rule(struct sfe_connection_create *sic);
+extern void sfe_ipv4_destroy_rule(struct sfe_connection_destroy *sid);
+extern void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
+extern void sfe_ipv4_register_sync_rule_callback(sfe_sync_rule_callback_t callback);
+extern void sfe_ipv4_update_rule(struct sfe_connection_create *sic);
+extern void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark);

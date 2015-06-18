@@ -252,6 +252,16 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		return NF_ACCEPT;
 	}
 
+#ifdef CONFIG_XFRM
+	/*
+	 * Packet to xfrm for encapsulation, we can't process it
+	 */
+	if (unlikely(skb_dst(skb)->xfrm)) {
+		DEBUG_TRACE("packet to xfrm, ignoring\n");
+		return NF_ACCEPT;
+	}
+#endif
+
 	/*
 	 * Don't process packets that are not being forwarded.
 	 */
@@ -391,6 +401,28 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		DEBUG_TRACE("unhandled protocol %d\n", sic.protocol);
 		return NF_ACCEPT;
 	}
+
+#ifdef CONFIG_XFRM
+	sic.original_accel = 1;
+	sic.reply_accel = 1;
+
+	/*
+	 * For packets de-capsulated from xfrm, we still can accelerate it
+	 * on the direction we just received the packet.
+	 */
+	if (unlikely(skb->sp)) {
+		if (sic.protocol == IPPROTO_TCP &&
+			!(sic.flags & SFE_CREATE_FLAG_NO_SEQ_CHECK)) {
+			return NF_ACCEPT;
+		}
+
+		if (CTINFO2DIR(ctinfo) == IP_CT_DIR_ORIGINAL) {
+			sic.reply_accel = 0;
+		} else {
+			sic.original_accel = 0;
+		}
+	}
+#endif
 
 	/*
 	 * Get the net device and MAC addresses that correspond to the various source and

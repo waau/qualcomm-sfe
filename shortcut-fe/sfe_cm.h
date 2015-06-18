@@ -57,6 +57,10 @@ struct sfe_connection_create {
 	uint32_t dest_td_end;
 	uint32_t dest_td_max_end;
 	uint32_t mark;
+#ifdef CONFIG_XFRM
+	uint32_t original_accel;
+	uint32_t reply_accel;
+#endif
 };
 
 /*

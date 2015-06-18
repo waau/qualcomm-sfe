@@ -195,6 +195,9 @@ struct sfe_ipv4_connection_match {
 #ifdef CONFIG_NF_FLOW_COOKIE
 	uint32_t flow_cookie;		/* used flow cookie, for debug */
 #endif
+#ifdef CONFIG_XFRM
+	uint32_t flow_accel;             /* The flow accelerated or not */
+#endif
 
 	/*
 	 * Connection state that we track once we match.
@@ -1281,6 +1284,18 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		return 0;
 	}
 
+#ifdef CONFIG_XFRM
+	/*
+	 * We can't accelerate the flow on this direction, just let it go
+	 * through the slow path.
+	 */
+	if (unlikely(!cm->flow_accel)) {
+		si->packets_not_forwarded++;
+		spin_unlock(&si->lock);
+		return 0;
+	}
+#endif
+
 	/*
 	 * Does our TTL allow forwarding?
 	 */
@@ -1638,6 +1653,17 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		return 0;
 	}
 
+#ifdef CONFIG_XFRM
+	/*
+	 * We can't accelerate the flow on this direction, just let it go
+	 * through the slow path.
+	 */
+	if (unlikely(!cm->flow_accel)) {
+		si->packets_not_forwarded++;
+		spin_unlock(&si->lock);
+		return 0;
+	}
+#endif
 	/*
 	 * Does our TTL allow forwarding?
 	 */
@@ -2500,6 +2526,9 @@ int sfe_ipv4_create_rule(struct sfe_connection_create *sic)
 #ifdef CONFIG_NF_FLOW_COOKIE
 	original_cm->flow_cookie = 0;
 #endif
+#ifdef CONFIG_XFRM
+	original_cm->flow_accel = sic->original_accel;
+#endif
 	original_cm->active_next = NULL;
 	original_cm->active_prev = NULL;
 	original_cm->active = false;
@@ -2547,6 +2576,9 @@ int sfe_ipv4_create_rule(struct sfe_connection_create *sic)
 	reply_cm->flags = 0;
 #ifdef CONFIG_NF_FLOW_COOKIE
 	reply_cm->flow_cookie = 0;
+#endif
+#ifdef CONFIG_XFRM
+	reply_cm->flow_accel = sic->reply_accel;
 #endif
 	reply_cm->active_next = NULL;
 	reply_cm->active_prev = NULL;

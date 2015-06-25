@@ -462,7 +462,7 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 		    fc_msg->dmac);
 
 
-	spin_lock_irqsave(&sfe_connections_lock, flags);
+	spin_lock_bh(&sfe_connections_lock);
 	conn = __fast_classifier_find_conn(key,
 					   fc_msg->proto,
 					   fc_msg->src_saddr,
@@ -484,7 +484,7 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 						   fc_msg->dport,
 						   fc_msg->sport);
 		if (conn == NULL) {
-			spin_unlock_irqrestore(&sfe_connections_lock, flags);
+			spin_unlock_bh(&sfe_connections_lock);
 			DEBUG_TRACE("REQUEST OFFLOAD NO MATCH\n");
 			atomic_inc(&offload_no_match_msgs);
 			return 0;
@@ -492,20 +492,20 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 	}
 
 	if (conn->offloaded != 0) {
-		spin_unlock_irqrestore(&sfe_connections_lock, flags);
+		spin_unlock_bh(&sfe_connections_lock);
 		DEBUG_TRACE("GOT REQUEST TO OFFLOAD ALREADY OFFLOADED CONN FROM USERSPACE\n");
 		return 0;
 	}
 
 	DEBUG_TRACE("USERSPACE OFFLOAD REQUEST, MATCH FOUND, WILL OFFLOAD\n");
 	if (fast_classifier_update_protocol(conn->sic, conn->ct) == 0) {
-		spin_unlock_irqrestore(&sfe_connections_lock, flags);
+		spin_unlock_bh(&sfe_connections_lock);
 		DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
 		return 0;
 	}
 
 	DEBUG_TRACE("INFO: calling sfe rule creation!\n");
-	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	spin_unlock_bh(&sfe_connections_lock);
 	ret = sfe_ipv4_create_rule(conn->sic);
 	if ((ret == 0) || (ret == -EADDRINUSE)) {
 		conn->offloaded = 1;
@@ -662,7 +662,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	DEBUG_TRACE("POST_ROUTE: checking new connection: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
 			sic.protocol, sic.src_ip.ip, sic.dest_ip.ip,
 			sic.src_port, sic.dest_port);
-	spin_lock_irqsave(&sfe_connections_lock, flags);
+	spin_lock_bh(&sfe_connections_lock);
 	key = fc_conn_hash(sic.src_ip.ip, sic.dest_ip.ip, sic.src_port, sic.dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
@@ -681,12 +681,12 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					struct fast_classifier_tuple fc_msg;
 					DEBUG_TRACE("OFFLOADING CONNECTION, TOO MANY HITS\n");
 					if (fast_classifier_update_protocol(p_sic, conn->ct) == 0) {
-						spin_unlock_irqrestore(&sfe_connections_lock, flags);
+						spin_unlock_bh(&sfe_connections_lock);
 						DEBUG_TRACE("UNKNOWN PROTOCOL OR CONNECTION CLOSING, SKIPPING\n");
 						return NF_ACCEPT;
 					}
 					DEBUG_TRACE("INFO: calling sfe rule creation!\n");
-					spin_unlock_irqrestore(&sfe_connections_lock, flags);
+					spin_unlock_bh(&sfe_connections_lock);
 
 					ret = sfe_ipv4_create_rule(p_sic);
 					if ((ret == 0) || (ret == -EADDRINUSE)) {
@@ -704,12 +704,12 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					return NF_ACCEPT;
 				} else if (conn->hits > offload_at_pkts) {
 					DEBUG_ERROR("ERROR: MORE THAN %d HITS AND NOT OFFLOADED\n", offload_at_pkts);
-					spin_unlock_irqrestore(&sfe_connections_lock, flags);
+					spin_unlock_bh(&sfe_connections_lock);
 					return NF_ACCEPT;
 				}
 			}
 
-			spin_unlock_irqrestore(&sfe_connections_lock, flags);
+			spin_unlock_bh(&sfe_connections_lock);
 			if (conn->offloaded == 1) {
 				sfe_ipv4_update_rule(p_sic);
 			}
@@ -721,7 +721,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 
 		DEBUG_TRACE("SEARCH CONTINUES");
 	}
-	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	spin_unlock_bh(&sfe_connections_lock);
 
 	/*
 	 * Get the net device and MAC addresses that correspond to the various source and
@@ -837,13 +837,13 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	conn->ct = ct;
 	sfe_connections_size++;
 	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", sfe_connections_size);
-	spin_lock_irqsave(&sfe_connections_lock, flags);
+	spin_lock_bh(&sfe_connections_lock);
 	key = fc_conn_hash(conn->sic->src_ip.ip,
 			   conn->sic->dest_ip.ip,
 			   conn->sic->src_port,
 			   conn->sic->dest_port);
 	hash_add(fc_conn_ht, &conn->hl, key);
-	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	spin_unlock_bh(&sfe_connections_lock);
 	DEBUG_TRACE("new offloadable: key: %u, %d sip: %pI4 dip: %pI4, sport: %d, dport: %d\n",
 		    key, p_sic->protocol, &(p_sic->src_ip), &(p_sic->dest_ip),
 		    p_sic->src_port, p_sic->dest_port);
@@ -880,7 +880,7 @@ static void fast_classifier_update_mark(struct sfe_connection_mark *mark)
 	u32 key;
 	struct hlist_node *node;
 
-	spin_lock_irqsave(&sfe_connections_lock, flags);
+	spin_lock_bh(&sfe_connections_lock);
 	key = fc_conn_hash(mark->src_ip.ip, mark->dest_ip.ip, mark->src_port,  mark->dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
@@ -895,7 +895,7 @@ static void fast_classifier_update_mark(struct sfe_connection_mark *mark)
 			break;
 		}
 	}
-	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	spin_unlock_bh(&sfe_connections_lock);
 }
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -1018,7 +1018,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	DEBUG_TRACE("INFO: want to clean up: proto: %d src_ip: %d dst_ip: %d, src_port: %d, dst_port: %d\n",
 			sid.protocol, sid.src_ip.ip, sid.dest_ip.ip,
 			sid.src_port, sid.dest_port);
-	spin_lock_irqsave(&sfe_connections_lock, flags);
+	spin_lock_bh(&sfe_connections_lock);
 
 	key = fc_conn_hash(sid.src_ip.ip, sid.dest_ip.ip, sid.src_port, sid.dest_port);
 	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
@@ -1058,7 +1058,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	} else {
 		DEBUG_TRACE("NO MATCH FOUND IN %d ENTRIES!!\n", sfe_connections_size);
 	}
-	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	spin_unlock_bh(&sfe_connections_lock);
 
 	sfe_ipv4_destroy_rule(&sid);
 
@@ -1286,7 +1286,7 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 	u32 i;
 	struct hlist_node *node;
 
-	spin_lock_irqsave(&sfe_connections_lock, flags);
+	spin_lock_bh(&sfe_connections_lock);
 	len += scnprintf(buf, PAGE_SIZE - len, "size=%d offload=%d offload_no_match=%d"
 			" offloaded=%d done=%d offloaded_fail=%d done_fail=%d\n",
 			sfe_connections_size,
@@ -1310,7 +1310,7 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 				conn->sic->mark,
 				conn->hits);
 	}
-	spin_unlock_irqrestore(&sfe_connections_lock, flags);
+	spin_unlock_bh(&sfe_connections_lock);
 
 	return len;
 }

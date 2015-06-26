@@ -281,6 +281,15 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	}
 
 	/*
+	 * Unconfirmed connection may be dropped by Linux at the final step,
+	 * So we don't process unconfirmed connections.
+	 */
+	if (!nf_ct_is_confirmed(ct)) {
+		DEBUG_TRACE("unconfirmed connection\n");
+		return NF_ACCEPT;
+	}
+
+	/*
 	 * Don't process connections that require support from a 'helper' (typically a NAT ALG).
 	 */
 	if (unlikely(nfct_help(ct))) {

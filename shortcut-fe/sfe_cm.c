@@ -27,6 +27,47 @@
 #include "sfe_cm.h"
 #include "sfe_backport.h"
 
+typedef enum sfe_cm_exception {
+	SFE_CM_EXCEPTION_PACKET_BROADCAST,
+	SFE_CM_EXCEPTION_PACKET_MULTICAST,
+	SFE_CM_EXCEPTION_NO_IIF,
+	SFE_CM_EXCEPTION_NO_CT,
+	SFE_CM_EXCEPTION_CT_NO_TRACK,
+	SFE_CM_EXCEPTION_CT_NO_CONFIRM,
+	SFE_CM_EXCEPTION_CT_IS_ALG,
+	SFE_CM_EXCEPTION_IS_IPV4_MCAST,
+	SFE_CM_EXCEPTION_IS_IPV6_MCAST,
+	SFE_CM_EXCEPTION_TCP_NOT_ASSURED,
+	SFE_CM_EXCEPTION_TCP_NOT_ESTABLISHED,
+	SFE_CM_EXCEPTION_UNKNOW_PROTOCOL,
+	SFE_CM_EXCEPTION_NO_SRC_DEV,
+	SFE_CM_EXCEPTION_NO_SRC_XLATE_DEV,
+	SFE_CM_EXCEPTION_NO_DEST_DEV,
+	SFE_CM_EXCEPTION_NO_DEST_XLATE_DEV,
+	SFE_CM_EXCEPTION_NO_BRIDGE,
+	SFE_CM_EXCEPTION_MAX
+} sfe_cm_exception_t;
+
+static char *sfe_cm_exception_events_string[SFE_CM_EXCEPTION_MAX] = {
+	"PACKET_BROADCAST",
+	"PACKET_MULTICAST",
+	"NO_IIF",
+	"NO_CT",
+	"CT_NO_TRACK",
+	"CT_NO_CONFIRM",
+	"CT_IS_ALG",
+	"IS_IPV4_MCAST",
+	"IS_IPV6_MCAST",
+	"TCP_NOT_ASSURED",
+	"TCP_NOT_ESTABLISHED",
+	"UNKNOW_PROTOCOL",
+	"NO_SRC_DEV",
+	"NO_SRC_XLATE_DEV",
+	"NO_DEST_DEV",
+	"NO_DEST_XLATE_DEV",
+	"NO_BRIDGE"
+};
+
 /*
  * Per-module structure.
  */
@@ -47,6 +88,7 @@ struct sfe_cm {
 					/* IPv4 notifier */
 	struct notifier_block inet6_notifier;
 					/* IPv6 notifier */
+	uint32_t exceptions[SFE_CM_EXCEPTION_MAX];
 };
 
 struct sfe_cm __sc;
@@ -60,6 +102,19 @@ extern int (*athrs_fast_nat_recv)(struct sk_buff *skb);
  * Expose what should be a static flag in the TCP connection tracker.
  */
 extern int nf_ct_tcp_no_window_check;
+
+/*
+ * sfe_cm_incr_exceptions()
+ *	increase an exception counter.
+ */
+static inline void sfe_cm_incr_exceptions(sfe_cm_exception_t except)
+{
+	struct sfe_cm *sc = &__sc;
+
+	spin_lock_bh(&sc->lock);
+	sc->exceptions[except]++;
+	spin_unlock_bh(&sc->lock);
+}
 
 /*
  * sfe_cm_recv()
@@ -244,10 +299,12 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * Don't process broadcast or multicast packets.
 	 */
 	if (unlikely(skb->pkt_type == PACKET_BROADCAST)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_PACKET_BROADCAST);
 		DEBUG_TRACE("broadcast, ignoring\n");
 		return NF_ACCEPT;
 	}
 	if (unlikely(skb->pkt_type == PACKET_MULTICAST)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_PACKET_MULTICAST);
 		DEBUG_TRACE("multicast, ignoring\n");
 		return NF_ACCEPT;
 	}
@@ -267,6 +324,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 */
 	in = dev_get_by_index(&init_net, skb->skb_iif);
 	if (!in) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_IIF);
 		DEBUG_TRACE("packet not forwarding\n");
 		return NF_ACCEPT;
 	}
@@ -278,6 +336,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 */
 	ct = nf_ct_get(skb, &ctinfo);
 	if (unlikely(!ct)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_CT);
 		DEBUG_TRACE("no conntrack connection, ignoring\n");
 		return NF_ACCEPT;
 	}
@@ -286,6 +345,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * Don't process untracked connections.
 	 */
 	if (unlikely(ct == &nf_conntrack_untracked)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_CT_NO_TRACK);
 		DEBUG_TRACE("untracked connection\n");
 		return NF_ACCEPT;
 	}
@@ -295,6 +355,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * So we don't process unconfirmed connections.
 	 */
 	if (!nf_ct_is_confirmed(ct)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_CT_NO_CONFIRM);
 		DEBUG_TRACE("unconfirmed connection\n");
 		return NF_ACCEPT;
 	}
@@ -303,6 +364,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * Don't process connections that require support from a 'helper' (typically a NAT ALG).
 	 */
 	if (unlikely(nfct_help(ct))) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_CT_IS_ALG);
 		DEBUG_TRACE("connection has helper\n");
 		return NF_ACCEPT;
 	}
@@ -325,6 +387,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
 		if (ipv4_is_multicast(sic.src_ip.ip) || ipv4_is_multicast(sic.dest_ip.ip)) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_IS_IPV4_MCAST);
 			DEBUG_TRACE("multicast address\n");
 			return NF_ACCEPT;
 		}
@@ -341,6 +404,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 
 		if (ipv6_addr_is_multicast((struct in6_addr *)sic.src_ip.ip6) ||
 		    ipv6_addr_is_multicast((struct in6_addr *)sic.dest_ip.ip6)) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_IS_IPV6_MCAST);
 			DEBUG_TRACE("multicast address\n");
 			return NF_ACCEPT;
 		}
@@ -379,6 +443,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		 * Don't try to manage a non-established connection.
 		 */
 		if (!test_bit(IPS_ASSURED_BIT, &ct->status)) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_TCP_NOT_ASSURED);
 			DEBUG_TRACE("non-established connection\n");
 			return NF_ACCEPT;
 		}
@@ -391,6 +456,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		spin_lock_bh(&ct->lock);
 		if (ct->proto.tcp.state != TCP_CONNTRACK_ESTABLISHED) {
 			spin_unlock_bh(&ct->lock);
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_TCP_NOT_ESTABLISHED);
 			DEBUG_TRACE("connection in termination state: %#x, s: %pI4:%u, d: %pI4:%u\n",
 				    ct->proto.tcp.state, &sic.src_ip, ntohs(sic.src_port),
 				    &sic.dest_ip, ntohs(sic.dest_port));
@@ -407,6 +473,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		break;
 
 	default:
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_UNKNOW_PROTOCOL);
 		DEBUG_TRACE("unhandled protocol %d\n", sic.protocol);
 		return NF_ACCEPT;
 	}
@@ -438,22 +505,26 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * destination host addresses.
 	 */
 	if (!sfe_cm_find_dev_and_mac_addr(&sic.src_ip, &src_dev, sic.src_mac, is_v4)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_SRC_DEV);
 		return NF_ACCEPT;
 	}
 
 	if (!sfe_cm_find_dev_and_mac_addr(&sic.src_ip_xlate, &dev, sic.src_mac_xlate, is_v4)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_SRC_XLATE_DEV);
 		goto done1;
 	}
 
 	dev_put(dev);
 
 	if (!sfe_cm_find_dev_and_mac_addr(&sic.dest_ip, &dev, sic.dest_mac, is_v4)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_DEST_DEV);
 		goto done1;
 	}
 
 	dev_put(dev);
 
 	if (!sfe_cm_find_dev_and_mac_addr(&sic.dest_ip_xlate, &dest_dev, sic.dest_mac_xlate, is_v4)) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_DEST_XLATE_DEV);
 		goto done1;
 	}
 
@@ -465,6 +536,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	if (src_dev->priv_flags & IFF_EBRIDGE) {
 		src_br_dev = br_port_dev_get(src_dev, sic.src_mac);
 		if (!src_br_dev) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no port found on bridge\n");
 			goto done2;
 		}
@@ -475,6 +547,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	if (dest_dev->priv_flags & IFF_EBRIDGE) {
 		dest_br_dev = br_port_dev_get(dest_dev, sic.dest_mac_xlate);
 		if (!dest_br_dev) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no port found on bridge\n");
 			goto done3;
 		}
@@ -489,6 +562,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
 		src_br_dev = SFE_DEV_MASTER(src_dev);
 		if (!src_br_dev) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
 			goto done2;
 		}
@@ -500,6 +574,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
 		dest_br_dev = SFE_DEV_MASTER(dest_dev);
 		if (!dest_br_dev) {
+			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
 			goto done3;
 		}
@@ -824,6 +899,34 @@ static int sfe_cm_inet6_event(struct notifier_block *this, unsigned long event, 
 }
 
 /*
+ * sfe_cm_get_exceptions
+ * 	dump exception counters
+ */
+static ssize_t sfe_cm_get_exceptions(struct device *dev,
+				     struct device_attribute *attr,
+				     char *buf)
+{
+	int idx, len;
+	struct sfe_cm *sc = &__sc;
+
+	spin_lock_bh(&sc->lock);
+	for (len = 0, idx = 0; idx < SFE_CM_EXCEPTION_MAX; idx++) {
+		if (sc->exceptions[idx]) {
+			len += sprintf(buf + len, "%s = %d\n", sfe_cm_exception_events_string[idx], sc->exceptions[idx]);
+		}
+	}
+	spin_unlock_bh(&sc->lock);
+
+	return len;
+}
+
+/*
+ * sysfs attributes.
+ */
+static const struct device_attribute sfe_cm_exceptions_attr =
+	__ATTR(exceptions, S_IRUGO, sfe_cm_get_exceptions, NULL);
+
+/*
  * sfe_cm_init()
  */
 static int __init sfe_cm_init(void)
@@ -840,6 +943,15 @@ static int __init sfe_cm_init(void)
 	if (!sc->sys_sfe_cm) {
 		DEBUG_ERROR("failed to register sfe_cm\n");
 		goto exit1;
+	}
+
+	/*
+	 * Create sys/sfe_cm/exceptions
+	 */
+	result = sysfs_create_file(sc->sys_sfe_cm, &sfe_cm_exceptions_attr.attr);
+	if (result) {
+		DEBUG_ERROR("failed to register exceptions file: %d\n", result);
+		goto exit2;
 	}
 
 	sc->dev_notifier.notifier_call = sfe_cm_device_event;
@@ -859,7 +971,7 @@ static int __init sfe_cm_init(void)
 	result = nf_register_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf post routing hook: %d\n", result);
-		goto exit2;
+		goto exit3;
 	}
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
@@ -869,7 +981,7 @@ static int __init sfe_cm_init(void)
 	result = nf_conntrack_register_notifier(&init_net, &sfe_cm_conntrack_notifier);
 	if (result < 0) {
 		DEBUG_ERROR("can't register nf notifier hook: %d\n", result);
-		goto exit3;
+		goto exit4;
 	}
 #endif
 
@@ -889,14 +1001,15 @@ static int __init sfe_cm_init(void)
 	return 0;
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
-exit3:
+exit4:
 #endif
 	nf_unregister_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
 
-exit2:
+exit3:
 	unregister_inet6addr_notifier(&sc->inet6_notifier);
 	unregister_inetaddr_notifier(&sc->inet_notifier);
 	unregister_netdevice_notifier(&sc->dev_notifier);
+exit2:
 	kobject_put(sc->sys_sfe_cm);
 
 exit1:

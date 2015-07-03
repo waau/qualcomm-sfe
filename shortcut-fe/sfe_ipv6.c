@@ -999,7 +999,7 @@ void sfe_ipv6_mark_rule(struct sfe_connection_mark *mark)
 	struct sfe_ipv6 *si = &__si6;
 	struct sfe_ipv6_connection *c;
 
-	spin_lock(&si->lock);
+	spin_lock_bh(&si->lock);
 	c = sfe_ipv6_find_connection(si, mark->protocol,
 				     mark->src_ip.ip6, mark->src_port,
 				     mark->dest_ip.ip6, mark->dest_port);
@@ -1010,7 +1010,7 @@ void sfe_ipv6_mark_rule(struct sfe_connection_mark *mark)
 		WARN_ON((0 != c->mark) && (0 == mark->mark));
 		c->mark = mark->mark;
 	}
-	spin_unlock(&si->lock);
+	spin_unlock_bh(&si->lock);
 }
 
 /*
@@ -1179,10 +1179,10 @@ static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si, struct sfe_ipv6_conne
 	sfe_sync_rule_callback_t sync_rule_callback;
 
 	rcu_read_lock();
-	spin_lock(&si->lock);
+	spin_lock_bh(&si->lock);
 	si->connection_flushes++;
 	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
-	spin_unlock(&si->lock);
+	spin_unlock_bh(&si->lock);
 
 	if (sync_rule_callback) {
 		/*
@@ -1225,10 +1225,10 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	 * Is our packet too short to contain a valid UDP header?
 	 */
 	if (!pskb_may_pull(skb, (sizeof(struct sfe_ipv6_udp_hdr) + ihl))) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("packet too short for UDP header\n");
 		return 0;
@@ -1246,7 +1246,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	src_port = udph->source;
 	dest_port = udph->dest;
 
-	spin_lock(&si->lock);
+	spin_lock_bh(&si->lock);
 
 	/*
 	 * Look for a connection match.
@@ -1262,7 +1262,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	if (unlikely(!cm)) {
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UDP_NO_CONNECTION]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("no connection found\n");
 		return 0;
@@ -1278,7 +1278,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("flush on find\n");
 		sfe_ipv6_flush_connection(si, c);
@@ -1292,7 +1292,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	 */
 	if (unlikely(!cm->flow_accel)) {
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 		return 0;
 	}
 #endif
@@ -1305,7 +1305,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UDP_SMALL_TTL]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("hop_limit too low\n");
 		sfe_ipv6_flush_connection(si, c);
@@ -1321,7 +1321,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UDP_NEEDS_FRAGMENTATION]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("larger than mtu\n");
 		sfe_ipv6_flush_connection(si, c);
@@ -1434,7 +1434,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	}
 
 	si->packets_forwarded++;
-	spin_unlock(&si->lock);
+	spin_unlock_bh(&si->lock);
 
 	/*
 	 * We're going to check for GSO flags when we transmit the packet so
@@ -1558,10 +1558,10 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	 * Is our packet too short to contain a valid UDP header?
 	 */
 	if (!pskb_may_pull(skb, (sizeof(struct sfe_ipv6_tcp_hdr) + ihl))) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("packet too short for TCP header\n");
 		return 0;
@@ -1580,7 +1580,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	dest_port = tcph->dest;
 	flags = tcp_flag_word(tcph);
 
-	spin_lock(&si->lock);
+	spin_lock_bh(&si->lock);
 
 	/*
 	 * Look for a connection match.
@@ -1602,14 +1602,14 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		if (likely((flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK)) == TCP_FLAG_ACK)) {
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_NO_CONNECTION_FAST_FLAGS]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("no connection found - fast flags\n");
 			return 0;
 		}
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_NO_CONNECTION_SLOW_FLAGS]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("no connection found - slow flags: 0x%x\n",
 			    flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK));
@@ -1626,7 +1626,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_IP_OPTIONS_OR_INITIAL_FRAGMENT]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("flush on find\n");
 		sfe_ipv6_flush_connection(si, c);
@@ -1640,7 +1640,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	 */
 	if (unlikely(!cm->flow_accel)) {
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 		return 0;
 	}
 #endif
@@ -1653,7 +1653,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_SMALL_TTL]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("hop_limit too low\n");
 		sfe_ipv6_flush_connection(si, c);
@@ -1669,7 +1669,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_NEEDS_FRAGMENTATION]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("larger than mtu\n");
 		sfe_ipv6_flush_connection(si, c);
@@ -1685,7 +1685,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		sfe_ipv6_remove_connection(si, c);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_FLAGS]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("TCP flags: 0x%x are not fast\n",
 			    flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK));
@@ -1717,7 +1717,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_SEQ_EXCEEDS_RIGHT_EDGE]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("seq: %u exceeds right edge: %u\n",
 				    seq, cm->protocol_state.tcp.max_end + 1);
@@ -1734,7 +1734,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_SMALL_DATA_OFFS]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("TCP data offset: %u, too small\n", data_offs);
 			sfe_ipv6_flush_connection(si, c);
@@ -1751,7 +1751,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_BAD_SACK]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("TCP option SACK size is wrong\n");
 			sfe_ipv6_flush_connection(si, c);
@@ -1767,7 +1767,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_BIG_DATA_OFFS]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("TCP data offset: %u, past end of packet: %u\n",
 				    data_offs, len);
@@ -1786,7 +1786,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_SEQ_BEFORE_LEFT_EDGE]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("seq: %u before left edge: %u\n",
 				    end, cm->protocol_state.tcp.end - counter_cm->protocol_state.tcp.max_win - 1);
@@ -1802,7 +1802,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_ACK_EXCEEDS_RIGHT_EDGE]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("ack: %u exceeds right edge: %u\n",
 				    sack, counter_cm->protocol_state.tcp.end + 1);
@@ -1822,7 +1822,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_ACK_BEFORE_LEFT_EDGE]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("ack: %u before left edge: %u\n", sack, left_edge);
 			sfe_ipv6_flush_connection(si, c);
@@ -1956,7 +1956,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	}
 
 	si->packets_forwarded++;
-	spin_unlock(&si->lock);
+	spin_unlock_bh(&si->lock);
 
 	/*
 	 * We're going to check for GSO flags when we transmit the packet so
@@ -2007,10 +2007,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	 */
 	len -= ihl;
 	if (!pskb_may_pull(skb, ihl + sizeof(struct icmp6hdr))) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("packet too short for ICMP header\n");
 		return 0;
@@ -2022,10 +2022,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	icmph = (struct icmp6hdr *)(skb->data + ihl);
 	if ((icmph->icmp6_type != ICMPV6_DEST_UNREACH)
 	    && (icmph->icmp6_type != ICMPV6_TIME_EXCEED)) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_UNHANDLED_TYPE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("unhandled ICMP type: 0x%x\n", icmph->icmp6_type);
 		return 0;
@@ -2039,10 +2039,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	len -= sizeof(struct icmp6hdr);
 	ihl += sizeof(struct icmp6hdr);
 	if (!pskb_may_pull(skb, ihl + sizeof(struct sfe_ipv6_ip_hdr) + sizeof(struct sfe_ipv6_ext_hdr))) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_IPV6_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("Embedded IP header not complete\n");
 		return 0;
@@ -2053,10 +2053,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	 */
 	icmp_iph = (struct sfe_ipv6_ip_hdr *)(icmph + 1);
 	if (unlikely(icmp_iph->version != 6)) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_IPV6_NON_V6]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("IP version: %u\n", icmp_iph->version);
 		return 0;
@@ -2075,10 +2075,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 			unsigned int frag_off = ntohs(frag_hdr->frag_off);
 
 			if (frag_off & SFE_IPV6_FRAG_OFFSET) {
-				spin_lock(&si->lock);
+				spin_lock_bh(&si->lock);
 				si->exception_events[SFE_IPV6_EXCEPTION_EVENT_NON_INITIAL_FRAGMENT]++;
 				si->packets_not_forwarded++;
-				spin_unlock(&si->lock);
+				spin_unlock_bh(&si->lock);
 
 				DEBUG_TRACE("non-initial fragment\n");
 				return 0;
@@ -2095,10 +2095,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 		 * the connection.
 		 */
 		if (!pskb_may_pull(skb, ihl + sizeof(struct sfe_ipv6_ext_hdr))) {
-			spin_lock(&si->lock);
+			spin_lock_bh(&si->lock);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_HEADER_INCOMPLETE]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("extension header %d not completed\n", next_hdr);
 			return 0;
@@ -2124,10 +2124,10 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 		break;
 
 	default:
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_IPV6_UNHANDLED_PROTOCOL]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("Unhandled embedded IP protocol: %u\n", icmp_iph->protocol);
 		return 0;
@@ -2136,7 +2136,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	src_ip = &icmp_iph->saddr;
 	dest_ip = &icmp_iph->daddr;
 
-	spin_lock(&si->lock);
+	spin_lock_bh(&si->lock);
 
 	/*
 	 * Look for a connection match.  Note that we reverse the source and destination
@@ -2149,7 +2149,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	if (unlikely(!cm)) {
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_NO_CONNECTION]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("no connection found\n");
 		return 0;
@@ -2163,7 +2163,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	sfe_ipv6_remove_connection(si, c);
 	si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_FLUSHED_CONNECTION]++;
 	si->packets_not_forwarded++;
-	spin_unlock(&si->lock);
+	spin_unlock_bh(&si->lock);
 
 	sfe_ipv6_flush_connection(si, c);
 	return 0;
@@ -2190,10 +2190,10 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 	 */
 	len = skb->len;
 	if (!pskb_may_pull(skb, ihl + sizeof(struct sfe_ipv6_ext_hdr))) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("len: %u is too short\n", len);
 		return 0;
@@ -2204,10 +2204,10 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 	 */
 	iph = (struct sfe_ipv6_ip_hdr *)skb->data;
 	if (unlikely(iph->version != 6)) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_NON_V6]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("IP version: %u\n", iph->version);
 		return 0;
@@ -2218,10 +2218,10 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 	 */
 	payload_len = ntohs(iph->payload_len);
 	if (unlikely(payload_len > (len - ihl))) {
-		spin_lock(&si->lock);
+		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_DATAGRAM_INCOMPLETE]++;
 		si->packets_not_forwarded++;
-		spin_unlock(&si->lock);
+		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("payload_len: %u, exceeds len: %u\n", payload_len, (len - sizeof(struct sfe_ipv6_ip_hdr)));
 		return 0;
@@ -2238,10 +2238,10 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 			unsigned int frag_off = ntohs(frag_hdr->frag_off);
 
 			if (frag_off & SFE_IPV6_FRAG_OFFSET) {
-				spin_lock(&si->lock);
+				spin_lock_bh(&si->lock);
 				si->exception_events[SFE_IPV6_EXCEPTION_EVENT_NON_INITIAL_FRAGMENT]++;
 				si->packets_not_forwarded++;
-				spin_unlock(&si->lock);
+				spin_unlock_bh(&si->lock);
 
 				DEBUG_TRACE("non-initial fragment\n");
 				return 0;
@@ -2253,10 +2253,10 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 		ext_hdr_len += sizeof(struct sfe_ipv6_ext_hdr);
 		ihl += ext_hdr_len;
 		if (!pskb_may_pull(skb, ihl + sizeof(struct sfe_ipv6_ext_hdr))) {
-			spin_lock(&si->lock);
+			spin_lock_bh(&si->lock);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_HEADER_INCOMPLETE]++;
 			si->packets_not_forwarded++;
-			spin_unlock(&si->lock);
+			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("extension header %d not completed\n", next_hdr);
 			return 0;
@@ -2278,10 +2278,10 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 		return sfe_ipv6_recv_icmp(si, skb, dev, len, iph, ihl);
 	}
 
-	spin_lock(&si->lock);
+	spin_lock_bh(&si->lock);
 	si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UNHANDLED_PROTOCOL]++;
 	si->packets_not_forwarded++;
-	spin_unlock(&si->lock);
+	spin_unlock_bh(&si->lock);
 
 	DEBUG_TRACE("not UDP, TCP or ICMP: %u\n", next_hdr);
 	return 0;

@@ -297,9 +297,8 @@ struct sfe_ipv6_connection {
 					/* Pointer to the next entry in the list of all connections */
 	struct sfe_ipv6_connection *all_connections_prev;
 					/* Pointer to the previous entry in the list of all connections */
-	int iterators;			/* Number of iterators currently using this connection */
-	bool pending_free;		/* Flag that indicates that this connection should be freed after iteration */
 	uint32_t mark;			/* mark for outgoing packet */
+	uint32_t debug_read_seq;	/* sequence number for debug dump */
 };
 
 /*
@@ -474,6 +473,7 @@ struct sfe_ipv6 {
 	 */
 	struct kobject *sys_sfe_ipv6;	/* sysfs linkage */
 	int debug_dev;			/* Major number of the debug char device */
+	uint32_t debug_read_seq;	/* sequence number for debug dump */
 };
 
 /*
@@ -498,8 +498,6 @@ enum sfe_ipv6_debug_xml_states {
 struct sfe_ipv6_debug_xml_write_state {
 	enum sfe_ipv6_debug_xml_states state;
 					/* XML output file state machine state */
-	struct sfe_ipv6_connection *iter_conn;
-					/* Next connection iterator */
 	int iter_exception;		/* Next exception iterator */
 };
 
@@ -1092,6 +1090,23 @@ static void sfe_ipv6_remove_connection(struct sfe_ipv6 *si, struct sfe_ipv6_conn
 	if (c->next) {
 		c->next->prev = c->prev;
 	}
+
+	/*
+	 * Unlink connection from all_connections list
+	 */
+	if (c->all_connections_prev) {
+		c->all_connections_prev->all_connections_next = c->all_connections_next;
+	} else {
+		si->all_connections_head = c->all_connections_next;
+	}
+
+	if (c->all_connections_next) {
+		c->all_connections_next->all_connections_prev = c->all_connections_prev;
+	} else {
+		si->all_connections_tail = c->all_connections_prev;
+	}
+
+	si->num_connections--;
 }
 
 /*
@@ -1149,51 +1164,6 @@ static void sfe_ipv6_gen_sync_connection(struct sfe_ipv6 *si, struct sfe_ipv6_co
 }
 
 /*
- * sfe_ipv6_decrement_connection_iterator()
- *	Remove an iterator from a connection - free all resources if necessary.
- *
- * Returns true if the connection should now be free, false if not.
- *
- * We must be locked on entry to this function.
- */
-static bool sfe_ipv6_decrement_connection_iterator(struct sfe_ipv6 *si, struct sfe_ipv6_connection *c)
-{
-	/*
-	 * Are we the last iterator for this connection?
-	 */
-	c->iterators--;
-	if (c->iterators) {
-		return false;
-	}
-
-	/*
-	 * Is this connection marked for deletion?
-	 */
-	if (!c->pending_free) {
-		return false;
-	}
-
-	/*
-	 * We're ready to delete this connection so unlink it from the "all
-	 * connections" list.
-	 */
-	si->num_connections--;
-	if (c->all_connections_prev) {
-		c->all_connections_prev->all_connections_next = c->all_connections_next;
-	} else {
-		si->all_connections_head = c->all_connections_next;
-	}
-
-	if (c->all_connections_next) {
-		c->all_connections_next->all_connections_prev = c->all_connections_prev;
-	} else {
-		si->all_connections_tail = c->all_connections_prev;
-	}
-
-	return true;
-}
-
-/*
  * sfe_ipv6_flush_connection()
  *	Flush a connection and free all associated resources.
  *
@@ -1206,39 +1176,12 @@ static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si, struct sfe_ipv6_conne
 {
 	struct sfe_connection_sync sis;
 	uint64_t now_jiffies;
-	bool pending_free = false;
 	sfe_sync_rule_callback_t sync_rule_callback;
 
 	rcu_read_lock();
 	spin_lock(&si->lock);
 	si->connection_flushes++;
-
-	/*
-	 * Check that we're not currently being iterated.  If we are then
-	 * we can't free this entry yet but must mark it pending a free.  If it's
-	 * not being iterated then we can unlink it from the list of all
-	 * connections.
-	 */
-	if (c->iterators) {
-		pending_free = true;
-		c->pending_free = true;
-	} else {
-		si->num_connections--;
-		if (c->all_connections_prev) {
-			c->all_connections_prev->all_connections_next = c->all_connections_next;
-		} else {
-			si->all_connections_head = c->all_connections_next;
-		}
-
-		if (c->all_connections_next) {
-			c->all_connections_next->all_connections_prev = c->all_connections_prev;
-		} else {
-			si->all_connections_tail = c->all_connections_prev;
-		}
-	}
-
 	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
-
 	spin_unlock(&si->lock);
 
 	if (sync_rule_callback) {
@@ -1251,13 +1194,6 @@ static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si, struct sfe_ipv6_conne
 	}
 
 	rcu_read_unlock();
-
-	/*
-	 * If we can't yet free the underlying memory then we're done.
-	 */
-	if (pending_free) {
-		return;
-	}
 
 	/*
 	 * Release our hold of the source and dest devices and free the memory
@@ -2646,10 +2582,8 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	c->reply_dev = dest_dev;
 	c->reply_match = reply_cm;
 	c->mark = sic->mark;
-
+	c->debug_read_seq = 0;
 	c->last_sync_jiffies = get_jiffies_64();
-	c->iterators = 0;
-	c->pending_free = false;
 
 	/*
 	 * Take hold of our source and dest devices for the duration of the connection.
@@ -2732,13 +2666,7 @@ void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
 	sfe_ipv6_remove_connection(si, c);
 	spin_unlock_bh(&si->lock);
 
-	/*
-	 * Finally synchronize state and free resources.  We need to protect against
-	 * pre-emption by our bottom half while we do this though.
-	 */
-	local_bh_disable();
 	sfe_ipv6_flush_connection(si, c);
-	local_bh_enable();
 
 	DEBUG_INFO("connection destroyed - p: %d, s: %pI6:%u, d: %pI6:%u\n",
 		   sid->protocol, sid->src_ip.ip6, ntohs(sid->src_port),
@@ -2787,67 +2715,31 @@ void sfe_ipv6_destroy_all_rules_for_dev(struct net_device *dev)
 {
 	struct sfe_ipv6 *si = &__si6;
 	struct sfe_ipv6_connection *c;
-	struct sfe_ipv6_connection *c_next;
 
+another_round:
 	spin_lock_bh(&si->lock);
-	c = si->all_connections_head;
-	if (!c) {
-		spin_unlock_bh(&si->lock);
-		return;
-	}
 
-	c->iterators++;
-
-	/*
-	 * Iterate over all connections
-	 */
-	while (c) {
-		c_next = c->all_connections_next;
-
+	for (c = si->all_connections_head; c; c = c->all_connections_next) {
 		/*
-		 * Before we do anything else, take an iterator reference for the
-		 * connection we'll iterate next.
-		 */
-		if (c_next) {
-			c_next->iterators++;
-		}
-
-		/*
-		 * Does this connection relate to the device we are destroying?  If
-		 * it does then ensure it is marked for being freed as soon as it
-		 * is no longer being iterated.
+		 * Does this connection relate to the device we are destroying?
 		 */
 		if (!dev
 		    || (dev == c->original_dev)
 		    || (dev == c->reply_dev)) {
-			c->pending_free = true;
-			sfe_ipv6_remove_connection(si, c);
+			break;
 		}
+	}
 
-		/*
-		 * Remove the iterator reference that we acquired and see if we
-		 * should free any resources.
-		 */
-		if (sfe_ipv6_decrement_connection_iterator(si, c)) {
-			spin_unlock_bh(&si->lock);
-
-			/*
-			 * This entry is dead so release our hold of the source and
-			 * dest devices and free the memory for our connection objects.
-			 */
-			dev_put(c->original_dev);
-			dev_put(c->reply_dev);
-			kfree(c->original_match);
-			kfree(c->reply_match);
-			kfree(c);
-
-			spin_lock_bh(&si->lock);
-		}
-
-		c = c_next;
+	if (c) {
+		sfe_ipv6_remove_connection(si, c);
 	}
 
 	spin_unlock_bh(&si->lock);
+
+	if (c) {
+		sfe_ipv6_flush_connection(si, c);
+		goto another_round;
+	}
 }
 
 /*
@@ -2958,6 +2850,8 @@ static bool sfe_ipv6_debug_dev_read_start(struct sfe_ipv6 *si, char *buffer, cha
 {
 	int bytes_read;
 
+	si->debug_read_seq++;
+
 	bytes_read = snprintf(msg, CHAR_DEV_MSG_SIZE, "<sfe_ipv6>\n");
 	if (copy_to_user(buffer + *total_read, msg, CHAR_DEV_MSG_SIZE)) {
 		return false;
@@ -2999,7 +2893,6 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 							   int *total_read, struct sfe_ipv6_debug_xml_write_state *ws)
 {
 	struct sfe_ipv6_connection *c;
-	struct sfe_ipv6_connection *c_next;
 	struct sfe_ipv6_connection_match *original_cm;
 	struct sfe_ipv6_connection_match *reply_cm;
 	int bytes_read;
@@ -3025,62 +2918,20 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 #endif
 
 	spin_lock_bh(&si->lock);
-	c = ws->iter_conn;
+
+	for (c = si->all_connections_head; c; c = c->all_connections_next) {
+		if (c->debug_read_seq < si->debug_read_seq) {
+			c->debug_read_seq = si->debug_read_seq;
+			break;
+		}
+	}
 
 	/*
-	 * Is this the first connection we need to scan?
+	 * If there were no connections then move to the next state.
 	 */
 	if (!c) {
-		c = si->all_connections_head;
-
-		/*
-		 * If there were no connections then move to the next state.
-		 */
-		if (!c) {
-			spin_unlock_bh(&si->lock);
-
-			ws->state++;
-			return true;
-		}
-
-		c->iterators++;
-	}
-
-	c_next = c->all_connections_next;
-	ws->iter_conn = c_next;
-
-	/*
-	 * Before we do anything else, take an iterator reference for the
-	 * connection we'll iterate next.
-	 */
-	if (c_next) {
-		c_next->iterators++;
-	}
-
-	/*
-	 * Remove the iterator reference that we acquired and see if we
-	 * should free any resources.
-	 */
-	if (sfe_ipv6_decrement_connection_iterator(si, c)) {
 		spin_unlock_bh(&si->lock);
-
-		/*
-		 * This entry is dead so release our hold of the source and
-		 * dest devices and free the memory for our connection objects.
-		 */
-		dev_put(c->original_dev);
-		dev_put(c->reply_dev);
-		kfree(c->original_match);
-		kfree(c->reply_match);
-		kfree(c);
-
-		/*
-		 * If we have no more connections then move to the next state.
-		 */
-		if (!c_next) {
-			ws->state++;
-		}
-
+		ws->state++;
 		return true;
 	}
 
@@ -3149,13 +3000,6 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 
 	*length -= bytes_read;
 	*total_read += bytes_read;
-
-	/*
-	 * If we have no more connections then move to the next state.
-	 */
-	if (!c_next) {
-		ws->state++;
-	}
 
 	return true;
 }
@@ -3434,48 +3278,14 @@ static int sfe_ipv6_debug_dev_open(struct inode *inode, struct file *file)
 static int sfe_ipv6_debug_dev_release(struct inode *inode, struct file *file)
 {
 	struct sfe_ipv6_debug_xml_write_state *ws;
-	struct sfe_ipv6_connection *c;
-	bool free_connection;
-	struct sfe_ipv6 *si = &__si6;
 
 	ws = (struct sfe_ipv6_debug_xml_write_state *)file->private_data;
-	if (!ws) {
-		return 0;
+	if (ws) {
+		/*
+		 * We've finished with our output so free the write state.
+		 */
+		kfree(ws);
 	}
-
-	/*
-	 * Are we currently iterating a connection?  If we are then
-	 * make sure that we reduce its iterator count and if necessary
-	 * free it.
-	 */
-	c = ws->iter_conn;
-	if (!c) {
-		goto exit_free_ws;
-	}
-
-	spin_lock_bh(&si->lock);
-	free_connection = sfe_ipv6_decrement_connection_iterator(si, c);
-	spin_unlock_bh(&si->lock);
-
-	if (!free_connection) {
-		goto exit_free_ws;
-	}
-
-	/*
-	 * This entry is dead so release our hold of the source and
-	 * dest devices and free the memory for our connection objects.
-	 */
-	dev_put(c->original_dev);
-	dev_put(c->reply_dev);
-	kfree(c->original_match);
-	kfree(c->reply_match);
-	kfree(c);
-
-exit_free_ws:
-	/*
-	 * We've finished with our output so free the write state.
-	 */
-	kfree(ws);
 
 	return 0;
 }

@@ -1427,8 +1427,8 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
 		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
-			xmit_dev->header_ops->create(skb, xmit_dev, ETH_P_IP,
-						     cm->xmit_dest_mac, cm->xmit_src_mac, len);
+			dev_hard_header(skb, xmit_dev, ETH_P_IP,
+					cm->xmit_dest_mac, cm->xmit_src_mac, len);
 		} else {
 			/*
 			 * For the simple case we write this really fast.
@@ -1965,8 +1965,8 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
 		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
-			xmit_dev->header_ops->create(skb, xmit_dev, ETH_P_IP,
-						     cm->xmit_dest_mac, cm->xmit_src_mac, len);
+			dev_hard_header(skb, xmit_dev, ETH_P_IP,
+					cm->xmit_dest_mac, cm->xmit_src_mac, len);
 		} else {
 			/*
 			 * For the simple case we write this really fast.

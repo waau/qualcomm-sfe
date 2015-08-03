@@ -45,6 +45,7 @@ typedef enum sfe_cm_exception {
 	SFE_CM_EXCEPTION_NO_DEST_DEV,
 	SFE_CM_EXCEPTION_NO_DEST_XLATE_DEV,
 	SFE_CM_EXCEPTION_NO_BRIDGE,
+	SFE_CM_EXCEPTION_LOCAL_OUT,
 	SFE_CM_EXCEPTION_MAX
 } sfe_cm_exception_t;
 
@@ -65,7 +66,8 @@ static char *sfe_cm_exception_events_string[SFE_CM_EXCEPTION_MAX] = {
 	"NO_SRC_XLATE_DEV",
 	"NO_DEST_DEV",
 	"NO_DEST_XLATE_DEV",
-	"NO_BRIDGE"
+	"NO_BRIDGE",
+	"LOCAL_OUT"
 };
 
 /*
@@ -318,6 +320,15 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		return NF_ACCEPT;
 	}
 #endif
+
+	/*
+	 * Don't process locally generated packets.
+	 */
+	if (skb->sk) {
+		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_LOCAL_OUT);
+		DEBUG_TRACE("skip local out packet\n");
+		return NF_ACCEPT;
+	}
 
 	/*
 	 * Don't process packets that are not being forwarded.

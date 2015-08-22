@@ -68,6 +68,10 @@ struct sfe_connection_create {
 	uint32_t original_accel;
 	uint32_t reply_accel;
 #endif
+	uint32_t src_priority;
+	uint32_t dest_priority;
+	uint32_t src_dscp;
+	uint32_t dest_dscp;
 };
 
 /*
@@ -81,6 +85,12 @@ struct sfe_connection_destroy {
 	__be16 dest_port;
 };
 
+typedef enum sfe_sync_reason {
+	SFE_SYNC_REASON_STATS,	/* Sync is to synchronize stats */
+	SFE_SYNC_REASON_FLUSH,	/* Sync is to flush a entry */
+	SFE_SYNC_REASON_DESTROY	/* Sync is to destroy a entry(requested by connection manager) */
+} sfe_sync_reason_t;
+
 /*
  * Structure used to sync connection stats/state back within the system.
  *
@@ -93,9 +103,13 @@ struct sfe_connection_sync {
 	int is_v6;			/* Is it for ipv6? */
 	int protocol;			/* IP protocol number (IPPROTO_...) */
 	sfe_ip_addr_t src_ip;		/* Non-NAT source address, i.e. the creator of the connection */
+	sfe_ip_addr_t src_ip_xlate;	/* NATed source address */
 	__be16 src_port;		/* Non-NAT source port */
-	sfe_ip_addr_t dest_ip;	/* Non-NAT destination address, i.e. to whom the connection was created */
+	__be16 src_port_xlate;		/* NATed source port */
+	sfe_ip_addr_t dest_ip;		/* Non-NAT destination address, i.e. to whom the connection was created */
+	sfe_ip_addr_t dest_ip_xlate;	/* NATed destination address */
 	__be16 dest_port;		/* Non-NAT destination port */
+	__be16 dest_port_xlate;		/* NATed destination port */
 	uint32_t src_td_max_window;
 	uint32_t src_td_end;
 	uint32_t src_td_max_end;
@@ -110,6 +124,7 @@ struct sfe_connection_sync {
 	uint64_t dest_byte_count;
 	uint32_t dest_new_packet_count;
 	uint32_t dest_new_byte_count;
+	uint32_t reason;		/* reason for stats sync message, i.e. destroy, flush, period sync */
 	uint64_t delta_jiffies;		/* Time to be added to the current timeout to keep the connection alive */
 };
 

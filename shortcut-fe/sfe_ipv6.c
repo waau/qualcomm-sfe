@@ -1124,7 +1124,8 @@ static void sfe_ipv6_remove_connection(struct sfe_ipv6 *si, struct sfe_ipv6_conn
  * already held or isn't required.
  */
 static void sfe_ipv6_gen_sync_connection(struct sfe_ipv6 *si, struct sfe_ipv6_connection *c,
-						  struct sfe_connection_sync *sis, uint64_t now_jiffies)
+					struct sfe_connection_sync *sis, sfe_sync_reason_t reason,
+					uint64_t now_jiffies)
 {
 	struct sfe_ipv6_connection_match *original_cm;
 	struct sfe_ipv6_connection_match *reply_cm;
@@ -1134,9 +1135,13 @@ static void sfe_ipv6_gen_sync_connection(struct sfe_ipv6 *si, struct sfe_ipv6_co
 	 */
 	sis->protocol = c->protocol;
 	sis->src_ip.ip6[0] = c->src_ip[0];
+	sis->src_ip_xlate.ip6[0] = c->src_ip_xlate[0];
 	sis->dest_ip.ip6[0] = c->dest_ip[0];
+	sis->dest_ip_xlate.ip6[0] = c->dest_ip_xlate[0];
 	sis->src_port = c->src_port;
+	sis->src_port_xlate = c->src_port_xlate;
 	sis->dest_port = c->dest_port;
+	sis->dest_port_xlate = c->dest_port_xlate;
 
 	original_cm = c->original_match;
 	reply_cm = c->reply_match;
@@ -1163,6 +1168,8 @@ static void sfe_ipv6_gen_sync_connection(struct sfe_ipv6 *si, struct sfe_ipv6_co
 	sis->dest_packet_count = reply_cm->rx_packet_count64;
 	sis->dest_byte_count = reply_cm->rx_byte_count64;
 
+	sis->reason = reason;
+
 	/*
 	 * Get the time increment since our last sync.
 	 */
@@ -1179,7 +1186,7 @@ static void sfe_ipv6_gen_sync_connection(struct sfe_ipv6 *si, struct sfe_ipv6_co
  * from within a BH and so we're fine, but we're also called when connections are
  * torn down.
  */
-static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si, struct sfe_ipv6_connection *c)
+static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si, struct sfe_ipv6_connection *c, sfe_sync_reason_t reason)
 {
 	struct sfe_connection_sync sis;
 	uint64_t now_jiffies;
@@ -1196,7 +1203,7 @@ static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si, struct sfe_ipv6_conne
 		 * Generate a sync message and then sync.
 		 */
 		now_jiffies = get_jiffies_64();
-		sfe_ipv6_gen_sync_connection(si, c, &sis, now_jiffies);
+		sfe_ipv6_gen_sync_connection(si, c, &sis, reason, now_jiffies);
 		sync_rule_callback(&sis);
 	}
 
@@ -1288,7 +1295,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("flush on find\n");
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1315,7 +1322,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("hop_limit too low\n");
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1331,7 +1338,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("larger than mtu\n");
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1636,7 +1643,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("flush on find\n");
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1663,7 +1670,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("hop_limit too low\n");
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1679,7 +1686,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		spin_unlock_bh(&si->lock);
 
 		DEBUG_TRACE("larger than mtu\n");
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1696,7 +1703,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 
 		DEBUG_TRACE("TCP flags: 0x%x are not fast\n",
 			    flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK));
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		return 0;
 	}
 
@@ -1728,7 +1735,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 
 			DEBUG_TRACE("seq: %u exceeds right edge: %u\n",
 				    seq, cm->protocol_state.tcp.max_end + 1);
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -1744,7 +1751,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("TCP data offset: %u, too small\n", data_offs);
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -1761,7 +1768,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("TCP option SACK size is wrong\n");
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -1778,7 +1785,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 
 			DEBUG_TRACE("TCP data offset: %u, past end of packet: %u\n",
 				    data_offs, len);
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -1797,7 +1804,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 
 			DEBUG_TRACE("seq: %u before left edge: %u\n",
 				    end, cm->protocol_state.tcp.end - counter_cm->protocol_state.tcp.max_win - 1);
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -1813,7 +1820,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 
 			DEBUG_TRACE("ack: %u exceeds right edge: %u\n",
 				    sack, counter_cm->protocol_state.tcp.end + 1);
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -1832,7 +1839,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			spin_unlock_bh(&si->lock);
 
 			DEBUG_TRACE("ack: %u before left edge: %u\n", sack, left_edge);
-			sfe_ipv6_flush_connection(si, c);
+			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 			return 0;
 		}
 
@@ -2172,7 +2179,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	si->packets_not_forwarded++;
 	spin_unlock_bh(&si->lock);
 
-	sfe_ipv6_flush_connection(si, c);
+	sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 	return 0;
 }
 
@@ -2673,7 +2680,7 @@ void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
 	sfe_ipv6_remove_connection(si, c);
 	spin_unlock_bh(&si->lock);
 
-	sfe_ipv6_flush_connection(si, c);
+	sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_DESTROY);
 
 	DEBUG_INFO("connection destroyed - p: %d, s: %pI6:%u, d: %pI6:%u\n",
 		   sid->protocol, sid->src_ip.ip6, ntohs(sid->src_port),
@@ -2744,7 +2751,7 @@ another_round:
 	spin_unlock_bh(&si->lock);
 
 	if (c) {
-		sfe_ipv6_flush_connection(si, c);
+		sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_DESTROY);
 		goto another_round;
 	}
 }
@@ -2831,7 +2838,7 @@ static void sfe_ipv6_periodic_sync(unsigned long arg)
 		 * Sync the connection state.
 		 */
 		c = cm->connection;
-		sfe_ipv6_gen_sync_connection(si, c, &sis, now_jiffies);
+		sfe_ipv6_gen_sync_connection(si, c, &sis, SFE_SYNC_REASON_STATS, now_jiffies);
 
 		/*
 		 * We don't want to be holding the lock when we sync!

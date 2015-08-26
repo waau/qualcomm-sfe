@@ -53,6 +53,9 @@ struct sfe_ipv4_eth_hdr {
 	__be16 h_proto;
 } SFE_IPV4_UNALIGNED_STRUCT;
 
+#define SFE_IPV4_DSCP_MASK 0x3
+#define SFE_IPV4_DSCP_SHIFT 2
+
 /*
  * An IPv4 header, but with an optional "packed" attribute to
  * help with performance on some platforms (see the definition of
@@ -153,16 +156,20 @@ struct sfe_ipv4_tcp_connection_match {
 /*
  * Bit flags for IPv4 connection matching entry.
  */
-#define SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC 0x1
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC (1<<0)
 					/* Perform source translation */
-#define SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST 0x2
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST (1<<1)
 					/* Perform destination translation */
-#define SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK 0x4
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK (1<<2)
 					/* Ignore TCP sequence numbers */
-#define SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR 0x8
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR (1<<3)
 					/* Fast Ethernet header write */
-#define SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR 0x10
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR (1<<4)
 					/* Fast Ethernet header write */
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK (1<<5)
+					/* remark priority of SKB */
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK (1<<6)
+					/* remark DSCP of packet */
 
 /*
  * IPv4 connection matching structure.
@@ -231,6 +238,12 @@ struct sfe_ipv4_connection_match {
 					/* Transport layer checksum adjustment after destination translation */
 	uint16_t xlate_dest_partial_csum_adjustment;
 					/* Transport layer pseudo header checksum adjustment after destination translation */
+
+	/*
+	 * QoS information
+	 */
+	uint32_t priority;
+	uint32_t dscp;
 
 	/*
 	 * Packet transmit information.
@@ -1283,6 +1296,13 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 
 	/*
+	 * Update DSCP
+	 */
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
+		iph->tos = (iph->tos & SFE_IPV4_DSCP_MASK) | cm->dscp;
+	}
+
+	/*
 	 * Decrement our TTL.
 	 */
 	iph->ttl = ttl - 1;
@@ -1392,6 +1412,13 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			eth->h_source[1] = cm->xmit_src_mac[1];
 			eth->h_source[2] = cm->xmit_src_mac[2];
 		}
+	}
+
+	/*
+	 * Update priority of skb.
+	 */
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK)) {
+		skb->priority = cm->priority;
 	}
 
 	/*
@@ -1827,6 +1854,13 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 
 	/*
+	 * Update DSCP
+	 */
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
+		iph->tos = (iph->tos & SFE_IPV4_DSCP_MASK) | cm->dscp;
+	}
+
+	/*
 	 * Decrement our TTL.
 	 */
 	iph->ttl = ttl - 1;
@@ -1930,6 +1964,13 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			eth->h_source[1] = cm->xmit_src_mac[1];
 			eth->h_source[2] = cm->xmit_src_mac[2];
 		}
+	}
+
+	/*
+	 * Update priority of skb.
+	 */
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK)) {
+		skb->priority = cm->priority;
 	}
 
 	/*
@@ -2473,6 +2514,14 @@ int sfe_ipv4_create_rule(struct sfe_connection_create *sic)
 	original_cm->connection = c;
 	original_cm->counter_match = reply_cm;
 	original_cm->flags = 0;
+	if (sic->flags & SFE_CREATE_FLAG_REMARK_PRIORITY) {
+		original_cm->priority = sic->src_priority;
+		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
+	}
+	if (sic->flags & SFE_CREATE_FLAG_REMARK_DSCP) {
+		original_cm->dscp = sic->src_dscp << SFE_IPV4_DSCP_SHIFT;
+		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK;
+	}
 #ifdef CONFIG_NF_FLOW_COOKIE
 	original_cm->flow_cookie = 0;
 #endif
@@ -2524,6 +2573,14 @@ int sfe_ipv4_create_rule(struct sfe_connection_create *sic)
 	reply_cm->connection = c;
 	reply_cm->counter_match = original_cm;
 	reply_cm->flags = 0;
+	if (sic->flags & SFE_CREATE_FLAG_REMARK_PRIORITY) {
+		reply_cm->priority = sic->dest_priority;
+		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
+	}
+	if (sic->flags & SFE_CREATE_FLAG_REMARK_DSCP) {
+		reply_cm->dscp = sic->dest_dscp << SFE_IPV4_DSCP_SHIFT;
+		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK;
+	}
 #ifdef CONFIG_NF_FLOW_COOKIE
 	reply_cm->flow_cookie = 0;
 #endif
@@ -2914,7 +2971,7 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	uint64_t dest_rx_packets;
 	uint64_t dest_rx_bytes;
 	uint64_t last_sync_jiffies;
-	uint32_t mark;
+	uint32_t mark, src_priority, dest_priority, src_dscp, dest_dscp;
 #ifdef CONFIG_NF_FLOW_COOKIE
 	int src_flow_cookie, dst_flow_cookie;
 #endif
@@ -2946,6 +3003,8 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	src_ip_xlate = c->src_ip_xlate;
 	src_port = c->src_port;
 	src_port_xlate = c->src_port_xlate;
+	src_priority = original_cm->priority;
+	src_dscp = original_cm->dscp >> SFE_IPV4_DSCP_SHIFT;
 
 	sfe_ipv4_connection_match_update_summary_stats(original_cm);
 	sfe_ipv4_connection_match_update_summary_stats(reply_cm);
@@ -2957,6 +3016,8 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 	dest_ip_xlate = c->dest_ip_xlate;
 	dest_port = c->dest_port;
 	dest_port_xlate = c->dest_port_xlate;
+	dest_priority = reply_cm->priority;
+	dest_dscp = reply_cm->dscp >> SFE_IPV4_DSCP_SHIFT;
 	dest_rx_packets = reply_cm->rx_packet_count64;
 	dest_rx_bytes = reply_cm->rx_byte_count64;
 	last_sync_jiffies = get_jiffies_64() - c->last_sync_jiffies;
@@ -2972,10 +3033,12 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				"src_dev=\"%s\" "
 				"src_ip=\"%pI4\" src_ip_xlate=\"%pI4\" "
 				"src_port=\"%u\" src_port_xlate=\"%u\" "
+				"src_priority=\"%u\" src_dscp=\"%u\" "
 				"src_rx_pkts=\"%llu\" src_rx_bytes=\"%llu\" "
 				"dest_dev=\"%s\" "
 				"dest_ip=\"%pI4\" dest_ip_xlate=\"%pI4\" "
 				"dest_port=\"%u\" dest_port_xlate=\"%u\" "
+				"dest_priority=\"%u\" dest_dscp=\"%u\" "
 				"dest_rx_pkts=\"%llu\" dest_rx_bytes=\"%llu\" "
 #ifdef CONFIG_NF_FLOW_COOKIE
 				"src_flow_cookie=\"%d\" dst_flow_cookie=\"%d\" "
@@ -2986,10 +3049,12 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				src_dev->name,
 				&src_ip, &src_ip_xlate,
 				ntohs(src_port), ntohs(src_port_xlate),
+				src_priority, src_dscp,
 				src_rx_packets, src_rx_bytes,
 				dest_dev->name,
 				&dest_ip, &dest_ip_xlate,
 				ntohs(dest_port), ntohs(dest_port_xlate),
+				dest_priority, dest_dscp,
 				dest_rx_packets, dest_rx_bytes,
 #ifdef CONFIG_NF_FLOW_COOKIE
 				src_flow_cookie, dst_flow_cookie,

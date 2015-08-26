@@ -21,6 +21,7 @@
 #include <net/route.h>
 #include <net/ip6_route.h>
 #include <net/addrconf.h>
+#include <net/dsfield.h>
 #include <linux/inetdevice.h>
 #include <linux/netfilter_bridge.h>
 #include <linux/netfilter_ipv6.h>
@@ -28,6 +29,7 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
+#include <linux/netfilter/xt_dscp.h>
 #include <linux/if_bridge.h>
 
 #include "sfe.h"
@@ -397,10 +399,14 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	reply_tuple = ct->tuplehash[IP_CT_DIR_REPLY].tuple;
 	sic.protocol = (int32_t)orig_tuple.dst.protonum;
 
+	sic.flags = 0;
+
 	/*
 	 * Get addressing information, non-NAT first
 	 */
 	if (likely(is_v4)) {
+		uint32_t dscp;
+
 		sic.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
 		sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
 
@@ -416,7 +422,15 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		 */
 		sic.src_ip_xlate.ip = (__be32)reply_tuple.dst.u3.ip;
 		sic.dest_ip_xlate.ip = (__be32)reply_tuple.src.u3.ip;
+
+		dscp = ipv4_get_dsfield(ip_hdr(skb)) >> XT_DSCP_SHIFT;
+		if (dscp) {
+			sic.src_dscp = sic.dest_dscp = dscp;
+			sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
+		}
 	} else {
+		uint32_t dscp;
+
 		sic.src_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.src.u3.in6);
 		sic.dest_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.dst.u3.in6);
 
@@ -433,9 +447,13 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		 */
 		sic.src_ip_xlate.ip6[0] = *((struct sfe_ipv6_addr *)&reply_tuple.dst.u3.in6);
 		sic.dest_ip_xlate.ip6[0] = *((struct sfe_ipv6_addr *)&reply_tuple.src.u3.in6);
-	}
 
-	sic.flags = 0;
+		dscp = ipv6_get_dsfield(ipv6_hdr(skb)) >> XT_DSCP_SHIFT;
+		if (dscp) {
+			sic.src_dscp = sic.dest_dscp = dscp;
+			sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
+		}
+	}
 
 	switch (sic.protocol) {
 	case IPPROTO_TCP:
@@ -517,6 +535,14 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		}
 	}
 #endif
+
+	/*
+	 * Get QoS information
+	 */
+	if (skb->priority) {
+		sic.src_priority = sic.dest_priority = skb->priority;
+		sic.flags |= SFE_CREATE_FLAG_REMARK_PRIORITY;
+	}
 
 	/*
 	 * Get the net device and MAC addresses that correspond to the various source and

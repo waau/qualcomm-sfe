@@ -18,8 +18,12 @@
 /*
  * connection flags.
  */
-#define SFE_CREATE_FLAG_NO_SEQ_CHECK 0x1
+#define SFE_CREATE_FLAG_NO_SEQ_CHECK (1<<0)
 					/* Indicates that we should not check sequence numbers */
+#define SFE_CREATE_FLAG_REMARK_PRIORITY (1<<1)
+					/* Indicates that we should remark priority of skb */
+#define SFE_CREATE_FLAG_REMARK_DSCP (1<<2)
+					/* Indicates that we should remark DSCP of packet */
 
 /*
  * IPv6 address structure

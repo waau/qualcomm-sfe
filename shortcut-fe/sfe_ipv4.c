@@ -418,6 +418,8 @@ struct sfe_ipv4 {
 					/* flow cookie table*/
 	flow_cookie_set_func_t flow_cookie_set_func;
 					/* function used to configure flow cookie in hardware*/
+	int flow_cookie_enable;
+					/* Enable/disable flow cookie at runtime */
 #endif
 
 	/*
@@ -779,6 +781,9 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 	*hash_head = cm;
 
 #ifdef CONFIG_NF_FLOW_COOKIE
+	if (!si->flow_cookie_enable)
+		return;
+
 	/*
 	 * Configure hardware to put a flow cookie in packet of this flow,
 	 * then we can accelerate the lookup process when we received this packet.
@@ -804,7 +809,6 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 		}
 	}
 #endif
-
 }
 
 /*
@@ -816,29 +820,31 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 static inline void sfe_ipv4_remove_sfe_ipv4_connection_match(struct sfe_ipv4 *si, struct sfe_ipv4_connection_match *cm)
 {
 #ifdef CONFIG_NF_FLOW_COOKIE
-	/*
-	 * Tell hardware that we no longer need a flow cookie in packet of this flow
-	 */
-	unsigned int conn_match_idx;
+	if (si->flow_cookie_enable) {
+		/*
+		 * Tell hardware that we no longer need a flow cookie in packet of this flow
+		 */
+		unsigned int conn_match_idx;
 
-	for (conn_match_idx = 1; conn_match_idx < SFE_FLOW_COOKIE_SIZE; conn_match_idx++) {
-		struct sfe_flow_cookie_entry *entry = &si->sfe_flow_cookie_table[conn_match_idx];
+		for (conn_match_idx = 1; conn_match_idx < SFE_FLOW_COOKIE_SIZE; conn_match_idx++) {
+			struct sfe_flow_cookie_entry *entry = &si->sfe_flow_cookie_table[conn_match_idx];
 
-		if (cm == entry->match) {
-			flow_cookie_set_func_t func;
+			if (cm == entry->match) {
+				flow_cookie_set_func_t func;
 
-			rcu_read_lock();
-			func = rcu_dereference(si->flow_cookie_set_func);
-			if (func) {
-				func(cm->match_protocol, cm->match_src_ip, cm->match_src_port,
-				     cm->match_dest_ip, cm->match_dest_port, 0);
+				rcu_read_lock();
+				func = rcu_dereference(si->flow_cookie_set_func);
+				if (func) {
+					func(cm->match_protocol, cm->match_src_ip, cm->match_src_port,
+					     cm->match_dest_ip, cm->match_dest_port, 0);
+				}
+				rcu_read_unlock();
+
+				cm->flow_cookie = 0;
+				entry->match = NULL;
+				entry->last_clean_time = jiffies;
+				break;
 			}
-			rcu_read_unlock();
-
-			cm->flow_cookie = 0;
-			entry->match = NULL;
-			entry->last_clean_time = jiffies;
-			break;
 		}
 	}
 #endif
@@ -3401,6 +3407,36 @@ int sfe_unregister_flow_cookie_cb(flow_cookie_set_func_t cb)
 	RCU_INIT_POINTER(si->flow_cookie_set_func, NULL);
 	return 0;
 }
+
+/*
+ * sfe_ipv4_get_flow_cookie()
+ */
+static ssize_t sfe_ipv4_get_flow_cookie(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sfe_ipv4 *si = &__si;
+	return sprintf(buf, "%d\n", si->flow_cookie_enable);
+}
+
+/*
+ * sfe_ipv4_set_flow_cookie()
+ */
+static ssize_t sfe_ipv4_set_flow_cookie(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t size)
+{
+	struct sfe_ipv4 *si = &__si;
+	strict_strtol(buf, 0, (long int *)&si->flow_cookie_enable);
+
+	return size;
+}
+
+/*
+ * sysfs attributes.
+ */
+static const struct device_attribute sfe_ipv4_flow_cookie_attr =
+	__ATTR(flow_cookie_enable, S_IWUGO | S_IRUGO, sfe_ipv4_get_flow_cookie, sfe_ipv4_set_flow_cookie);
 #endif /*CONFIG_NF_FLOW_COOKIE*/
 
 /*
@@ -3428,8 +3464,16 @@ static int __init sfe_ipv4_init(void)
 	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
-		goto exit4;
+		goto exit2;
 	}
+
+#ifdef CONFIG_NF_FLOW_COOKIE
+	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
+	if (result) {
+		DEBUG_ERROR("failed to register flow cookie enable file: %d\n", result);
+		goto exit3;
+	}
+#endif /* CONFIG_NF_FLOW_COOKIE */
 
 	/*
 	 * Register our debug char device.
@@ -3437,7 +3481,7 @@ static int __init sfe_ipv4_init(void)
 	result = register_chrdev(0, "sfe_ipv4", &sfe_ipv4_debug_dev_fops);
 	if (result < 0) {
 		DEBUG_ERROR("Failed to register chrdev: %d\n", result);
-		goto exit5;
+		goto exit4;
 	}
 
 	si->debug_dev = result;
@@ -3452,10 +3496,15 @@ static int __init sfe_ipv4_init(void)
 
 	return 0;
 
-exit5:
+exit4:
+#ifdef CONFIG_NF_FLOW_COOKIE
+	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
+
+exit3:
+#endif /* CONFIG_NF_FLOW_COOKIE */
 	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 
-exit4:
+exit2:
 	kobject_put(si->sys_sfe_ipv4);
 
 exit1:
@@ -3480,6 +3529,9 @@ static void __exit sfe_ipv4_exit(void)
 
 	unregister_chrdev(si->debug_dev, "sfe_ipv4");
 
+#ifdef CONFIG_NF_FLOW_COOKIE
+	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
+#endif /* CONFIG_NF_FLOW_COOKIE */
 	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 
 	kobject_put(si->sys_sfe_ipv4);

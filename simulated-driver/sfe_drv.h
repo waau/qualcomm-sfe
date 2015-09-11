@@ -52,6 +52,7 @@
 #define SFE_RULE_CREATE_DSCP_MARKING_VALID (1<<5) /**< DSCP marking fields are valid */
 #define SFE_RULE_CREATE_VLAN_MARKING_VALID (1<<6) /**< VLAN marking fields are valid */
 #define SFE_RULE_CREATE_MC_NAT_VALID       (1<<7) /**< Interface is configured with Source-NAT */
+#define SFE_RULE_CREATE_DIRECTION_VALID    (1<<8) /**< specify acceleration directions */
 
 typedef enum sfe_rule_sync_reason {
 	SFE_RULE_SYNC_REASON_DESTROY,	/* Sync is to synchronize stats */
@@ -221,6 +222,16 @@ struct sfe_vlan_rule {
 };
 
 /**
+ * Acceleration direction rule structure
+ * 	Sometimes we just want to accelerate traffic in one direction but not in another.
+ */
+struct sfe_acceleration_direction_rule {
+	uint8_t flow_accel;		/**< Accelerate in flow direction */
+	uint8_t return_accel;		/**< Accelerate in return direction */
+	uint8_t reserved[2];		/**< Padded for alignment */
+};
+
+/**
  * The IPv4 rule create sub-message structure.
  */
 struct sfe_ipv4_rule_create_msg {
@@ -237,7 +248,9 @@ struct sfe_ipv4_rule_create_msg {
 	struct sfe_dscp_rule dscp_rule;			/**< DSCP related accleration parameters */
 	struct sfe_vlan_rule vlan_primary_rule;		/**< Primary VLAN related accleration parameters */
 	struct sfe_vlan_rule vlan_secondary_rule;	/**< Secondary VLAN related accleration parameters */
-
+#ifdef CONFIG_XFRM
+	struct sfe_acceleration_direction_rule direction_rule;/* Direction related accleration parameters*/
+#endif
 	/* Response */
 	uint32_t index;					/**< Slot ID for cache stats to host OS */
 };
@@ -328,7 +341,9 @@ struct sfe_ipv6_rule_create_msg {
 	struct sfe_dscp_rule dscp_rule;			/**< DSCP related accleration parameters */
 	struct sfe_vlan_rule vlan_primary_rule;		/**< VLAN related accleration parameters */
 	struct sfe_vlan_rule vlan_secondary_rule;	/**< VLAN related accleration parameters */
-
+#ifdef CONFIG_XFRM
+	struct sfe_acceleration_direction_rule direction_rule;/* Direction related accleration parameters*/
+#endif
 	/*
 	 * Response
 	 */

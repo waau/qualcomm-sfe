@@ -305,6 +305,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	struct net_device *dest_br_dev = NULL;
 	struct nf_conntrack_tuple orig_tuple;
 	struct nf_conntrack_tuple reply_tuple;
+	SFE_NF_CONN_ACCT(acct);
 
 	/*
 	 * Don't process broadcast or multicast packets.
@@ -364,7 +365,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	/*
 	 * Don't process untracked connections.
 	 */
-	if (unlikely(ct == &nf_conntrack_untracked)) {
+	if (unlikely(nf_ct_is_untracked(ct))) {
 		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_CT_NO_TRACK);
 		DEBUG_TRACE("untracked connection\n");
 		return NF_ACCEPT;
@@ -387,6 +388,21 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_CT_IS_ALG);
 		DEBUG_TRACE("connection has helper\n");
 		return NF_ACCEPT;
+	}
+
+	/*
+	 * Check if the acceleration of a flow could be rejected quickly.
+	 */
+	acct = nf_conn_acct_find(ct);
+	if (acct) {
+		long long packets = atomic64_read(&SFE_ACCT_COUNTER(acct)[CTINFO2DIR(ctinfo)].packets);
+		if ((packets > 0xff) && (packets & 0xff)) {
+			/*
+			 * Connection hits slow path at least 256 times, so it must be not able to accelerate.
+			 * But we also give it a chance to walk through ECM every 256 packets
+			 */
+			return NF_ACCEPT;
+		}
 	}
 
 	/*
@@ -708,7 +724,7 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	/*
 	 * If this is an untracked connection then we can't have any state either.
 	 */
-	if (unlikely(ct == &nf_conntrack_untracked)) {
+	if (unlikely(nf_ct_is_untracked(ct))) {
 		DEBUG_TRACE("ignoring untracked conn\n");
 		return NOTIFY_DONE;
 	}

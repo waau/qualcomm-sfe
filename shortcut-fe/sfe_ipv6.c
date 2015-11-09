@@ -3438,7 +3438,7 @@ static ssize_t sfe_ipv6_get_flow_cookie(struct device *dev,
 					char *buf)
 {
 	struct sfe_ipv6 *si = &__si6;
-	return sprintf(buf, "%d\n", si->flow_cookie_enable);
+	return snprintf(buf, (ssize_t)PAGE_SIZE, "%d\n", si->flow_cookie_enable);
 }
 
 /*

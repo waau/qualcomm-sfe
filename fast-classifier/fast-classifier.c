@@ -1251,7 +1251,7 @@ static ssize_t fast_classifier_get_offload_at_pkts(struct device *dev,
 				      struct device_attribute *attr,
 				      char *buf)
 {
-	return sprintf(buf, "%d\n", offload_at_pkts);
+	return snprintf(buf, (ssize_t)PAGE_SIZE, "%d\n", offload_at_pkts);
 }
 
 /*
@@ -1322,7 +1322,7 @@ static ssize_t fast_classifier_get_skip_bridge_ingress(struct device *dev,
 				      struct device_attribute *attr,
 				      char *buf)
 {
-	return sprintf(buf, "%d\n", skip_to_bridge_ingress);
+	return snprintf(buf, (ssize_t)PAGE_SIZE, "%d\n", skip_to_bridge_ingress);
 }
 
 /*

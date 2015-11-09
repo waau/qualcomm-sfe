@@ -1163,7 +1163,7 @@ static ssize_t sfe_drv_get_exceptions(struct device *dev,
 	spin_lock_bh(&sfe_drv_ctx->lock);
 	for (len = 0, idx = 0; idx < SFE_DRV_EXCEPTION_MAX; idx++) {
 		if (sfe_drv_ctx->exceptions[idx]) {
-			len += sprintf(buf + len, "%s = %d\n", sfe_drv_exception_events_string[idx], sfe_drv_ctx->exceptions[idx]);
+			len += snprintf(buf + len, (ssize_t)(PAGE_SIZE - len), "%s = %d\n", sfe_drv_exception_events_string[idx], sfe_drv_ctx->exceptions[idx]);
 		}
 	}
 	spin_unlock_bh(&sfe_drv_ctx->lock);

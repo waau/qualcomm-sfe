@@ -55,10 +55,11 @@
 #define SFE_RULE_CREATE_DIRECTION_VALID    (1<<8) /**< specify acceleration directions */
 
 typedef enum sfe_rule_sync_reason {
-	SFE_RULE_SYNC_REASON_DESTROY,	/* Sync is to synchronize stats */
+	SFE_RULE_SYNC_REASON_STATS,	/* Sync is to synchronize stats */
 	SFE_RULE_SYNC_REASON_FLUSH,	/* Sync is to flush a entry */
 	SFE_RULE_SYNC_REASON_EVICT,	/* Sync is to evict a entry */
-	SFE_RULE_SYNC_REASON_STATS	/* Sync is to destroy a entry(requested by connection manager) */
+	SFE_RULE_SYNC_REASON_DESTROY	/* Sync is to destroy a entry(requested by connection manager) */
+
 } sfe_rule_sync_reason_t;
 
 /**

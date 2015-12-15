@@ -37,8 +37,14 @@ void dump_fc_tuple(struct fast_classifier_tuple *fc_msg) {
 			" SMAC=%02x:%02x:%02x:%02x:%02x:%02x",
 			" DMAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
 				fc_msg->proto,
-				inet_ntop(AF_INET, &(fc_msg->src_saddr),  src_str, INET_ADDRSTRLEN),
-				inet_ntop(AF_INET, &(fc_msg->dst_saddr),  dst_str, INET_ADDRSTRLEN),
+				inet_ntop(AF_INET,
+					&(fc_msg->src_saddr.in.s_addr),
+					src_str,
+					INET_ADDRSTRLEN),
+				inet_ntop(AF_INET,
+					&(fc_msg->dst_saddr.in.s_addr),
+					dst_str,
+					INET_ADDRSTRLEN),
 				fc_msg->sport, fc_msg->dport,
 				fc_msg->smac[0], fc_msg->smac[1], fc_msg->smac[2],
 				fc_msg->smac[3], fc_msg->smac[4], fc_msg->smac[5],
@@ -141,8 +147,8 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 #endif
 
 	fc_msg.proto = proto;
-	fc_msg.src_saddr = src_saddr;
-	fc_msg.dst_saddr = dst_saddr;
+	fc_msg.src_saddr.in.s_addr = src_saddr;
+	fc_msg.dst_saddr.in.s_addr = dst_saddr;
 	fc_msg.sport = sport;
 	fc_msg.dport = dport;
 	fc_msg.smac[0] = 'a';

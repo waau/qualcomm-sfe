@@ -384,8 +384,8 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 	}
 	DEBUG_TRACE("INFO: %d : %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
 			msg, fc_msg->proto,
-			&(fc_msg->src_saddr),
-			&(fc_msg->dst_saddr),
+			&(fc_msg->src_saddr.in.s_addr),
+			&(fc_msg->dst_saddr.in.s_addr),
 			fc_msg->sport, fc_msg->dport,
 			fc_msg->smac,
 			fc_msg->dmac);
@@ -446,16 +446,16 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
 
-	key = fc_conn_hash(fc_msg->src_saddr,
-			   fc_msg->dst_saddr,
+	key = fc_conn_hash(fc_msg->src_saddr.in.s_addr,
+			   fc_msg->dst_saddr.in.s_addr,
 			   fc_msg->sport,
 			   fc_msg->dport);
 
 	DEBUG_TRACE("want to offload: key=%u, %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n",
 		    key,
 		    fc_msg->proto,
-		    &(fc_msg->src_saddr),
-		    &(fc_msg->dst_saddr),
+		    &(fc_msg->src_saddr.in.s_addr),
+		    &(fc_msg->dst_saddr.in.s_addr),
 		    fc_msg->sport,
 		    fc_msg->dport,
 		    fc_msg->smac,
@@ -465,22 +465,22 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 	spin_lock_bh(&sfe_connections_lock);
 	conn = __fast_classifier_find_conn(key,
 					   fc_msg->proto,
-					   fc_msg->src_saddr,
-					   fc_msg->dst_saddr,
+					   fc_msg->src_saddr.in.s_addr,
+					   fc_msg->dst_saddr.in.s_addr,
 					   fc_msg->sport,
 					   fc_msg->dport);
 	if (conn == NULL) {
 		/* reverse the tuple and try again */
-		key = fc_conn_hash(fc_msg->dst_saddr,
-				   fc_msg->src_saddr,
+		key = fc_conn_hash(fc_msg->dst_saddr.in.s_addr,
+				   fc_msg->src_saddr.in.s_addr,
 				   fc_msg->dport,
 				   fc_msg->sport);
 		DEBUG_TRACE("conn not found, reversing tuple. new key: %u\n",
 			    key);
 		conn = __fast_classifier_find_conn(key,
 						   fc_msg->proto,
-						   fc_msg->dst_saddr,
-						   fc_msg->src_saddr,
+						   fc_msg->dst_saddr.in.s_addr,
+						   fc_msg->src_saddr.in.s_addr,
 						   fc_msg->dport,
 						   fc_msg->sport);
 		if (conn == NULL) {
@@ -692,8 +692,10 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 					if ((ret == 0) || (ret == -EADDRINUSE)) {
 						conn->offloaded = 1;
 						fc_msg.proto = sic.protocol;
-						fc_msg.src_saddr = sic.src_ip.ip;
-						fc_msg.dst_saddr = sic.dest_ip_xlate.ip;
+						fc_msg.src_saddr.in.s_addr =
+							sic.src_ip.ip;
+						fc_msg.dst_saddr.in.s_addr =
+							sic.dest_ip_xlate.ip;
 						fc_msg.sport = sic.src_port;
 						fc_msg.dport = sic.dest_port_xlate;
 						memcpy(fc_msg.smac, conn->smac, ETH_ALEN);
@@ -1033,8 +1035,8 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 		    p_sic->src_ip.ip == sid.src_ip.ip &&
 		    p_sic->dest_ip.ip == sid.dest_ip.ip) {
 			fc_msg.proto = p_sic->protocol;
-			fc_msg.src_saddr = p_sic->src_ip.ip;
-			fc_msg.dst_saddr = p_sic->dest_ip_xlate.ip;
+			fc_msg.src_saddr.in.s_addr = p_sic->src_ip.ip;
+			fc_msg.dst_saddr.in.s_addr = p_sic->dest_ip_xlate.ip;
 			fc_msg.sport = p_sic->src_port;
 			fc_msg.dport = p_sic->dest_port_xlate;
 			memcpy(fc_msg.smac, conn->smac, ETH_ALEN);

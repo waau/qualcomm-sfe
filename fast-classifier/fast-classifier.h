@@ -38,9 +38,16 @@ enum {
 #define FAST_CLASSIFIER_C_MAX (__FAST_CLASSIFIER_C_MAX - 1)
 
 struct fast_classifier_tuple {
+	unsigned short ethertype;
 	unsigned char proto;
-	unsigned long src_saddr;
-	unsigned long dst_saddr;
+	union {
+		struct in_addr in;
+		struct in6_addr in6;
+	} src_saddr;
+	union {
+		struct in_addr in;
+		struct in6_addr in6;
+	} dst_saddr;
 	unsigned short sport;
 	unsigned short dport;
 	unsigned char smac[ETH_ALEN];

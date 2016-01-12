@@ -2,7 +2,7 @@
  * sfe_ipv6.c
  *	Shortcut forwarding engine - IPv6 support.
  *
- * Copyright (c) 2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015-2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -2198,7 +2198,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 		si->packets_not_forwarded++;
 		spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("Unhandled embedded IP protocol: %u\n", icmp_iph->protocol);
+		DEBUG_TRACE("Unhandled embedded IP protocol: %u\n", next_hdr);
 		return 0;
 	}
 

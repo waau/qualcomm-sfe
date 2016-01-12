@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine connection manager.
  *	fast-classifier style
  *
-  * Copyright (c) 2013 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -823,7 +823,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	}
 	conn->hits = 0;
 	conn->offloaded = 0;
-	DEBUG_TRACE("Source MAC=%pM\n", mh->h_source);
+	DEBUG_TRACE("Source MAC=%pM\n", sic.src_mac);
 	memcpy(conn->smac, sic.src_mac, ETH_ALEN);
 	memcpy(conn->dmac, sic.dest_mac_xlate, ETH_ALEN);
 

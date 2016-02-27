@@ -2,7 +2,7 @@
  * sfe-cm.c
  *	Shortcut forwarding engine connection manager.
  *
- * Copyright (c) 2013-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -799,21 +799,9 @@ static struct nf_ct_event_notifier sfe_cm_conntrack_notifier = {
  * We want to examine packets after NAT translation and any ALG processing.
  */
 static struct nf_hook_ops sfe_cm_ops_post_routing[] __read_mostly = {
-	{
-		.hook = __sfe_cm_ipv4_post_routing_hook,
-		.owner = THIS_MODULE,
-		.pf = NFPROTO_IPV4,
-		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP_PRI_NAT_SRC + 1,
-	},
+	SFE_IPV4_NF_POST_ROUTING_HOOK(__sfe_cm_ipv4_post_routing_hook),
 #ifdef SFE_SUPPORT_IPV6
-	{
-		.hook = __sfe_cm_ipv6_post_routing_hook,
-		.owner = THIS_MODULE,
-		.pf = NFPROTO_IPV6,
-		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP6_PRI_NAT_SRC + 1,
-	},
+	SFE_IPV6_NF_POST_ROUTING_HOOK(__sfe_cm_ipv6_post_routing_hook),
 #endif
 };
 
@@ -860,7 +848,7 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 	/*
 	 * Look up conntrack connection
 	 */
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+	h = nf_conntrack_find_get(&init_net, SFE_NF_CT_DEFAULT_ZONE, &tuple);
 	if (unlikely(!h)) {
 		DEBUG_TRACE("no connection found\n");
 		return;

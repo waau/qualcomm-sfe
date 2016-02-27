@@ -537,7 +537,7 @@ static ssize_t sfe_ipv6_get_debug_dev(struct device *dev, struct device_attribut
  * sysfs attributes.
  */
 static const struct device_attribute sfe_ipv6_debug_dev_attr =
-	__ATTR(debug_dev, S_IWUGO | S_IRUGO, sfe_ipv6_get_debug_dev, NULL);
+	__ATTR(debug_dev, S_IWUSR | S_IRUGO, sfe_ipv6_get_debug_dev, NULL);
 
 /*
  * sfe_ipv6_addr_equal()
@@ -3458,7 +3458,7 @@ static ssize_t sfe_ipv6_set_flow_cookie(struct device *dev,
  * sysfs attributes.
  */
 static const struct device_attribute sfe_ipv6_flow_cookie_attr =
-	__ATTR(flow_cookie_enable, S_IWUGO | S_IRUGO, sfe_ipv6_get_flow_cookie, sfe_ipv6_set_flow_cookie);
+	__ATTR(flow_cookie_enable, S_IWUSR | S_IRUGO, sfe_ipv6_get_flow_cookie, sfe_ipv6_set_flow_cookie);
 #endif /*CONFIG_NF_FLOW_COOKIE*/
 
 /*

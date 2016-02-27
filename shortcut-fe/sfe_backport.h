@@ -2,7 +2,7 @@
  * sfe_backport.h
  *	Shortcut forwarding engine compatible header file.
  *
- * Copyright (c) 2014-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014-2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -17,7 +17,17 @@
 
 #include <linux/version.h>
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#define sfe_cm_ipv4_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
+static unsigned int __sfe_cm_ipv4_post_routing_hook(void *priv, \
+						    struct sk_buff *SKB, \
+						    const struct nf_hook_state *state)
+
+#define sfe_cm_ipv6_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
+static unsigned int __sfe_cm_ipv6_post_routing_hook(void *priv, \
+						    struct sk_buff *SKB, \
+						    const struct nf_hook_state *state)
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
 #define sfe_cm_ipv4_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
 static unsigned int __sfe_cm_ipv4_post_routing_hook(const struct nf_hook_ops *OPS, \
 						    struct sk_buff *SKB, \
@@ -47,6 +57,50 @@ static unsigned int __sfe_cm_ipv6_post_routing_hook(unsigned int HOOKNUM, \
 						    int (*OKFN)(struct sk_buff *))
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#define SFE_IPV4_NF_POST_ROUTING_HOOK(fn) \
+	{						\
+		.hook = fn,				\
+		.pf = NFPROTO_IPV4,			\
+		.hooknum = NF_INET_POST_ROUTING,	\
+		.priority = NF_IP_PRI_NAT_SRC + 1,	\
+	}
+#else
+#define SFE_IPV4_NF_POST_ROUTING_HOOK(fn) \
+	{						\
+		.hook = fn,				\
+		.owner = THIS_MODULE,			\
+		.pf = NFPROTO_IPV4,			\
+		.hooknum = NF_INET_POST_ROUTING,	\
+		.priority = NF_IP_PRI_NAT_SRC + 1,	\
+	}
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#define SFE_IPV6_NF_POST_ROUTING_HOOK(fn) \
+	{						\
+		.hook = fn,				\
+		.pf = NFPROTO_IPV6,			\
+		.hooknum = NF_INET_POST_ROUTING,	\
+		.priority = NF_IP_PRI_NAT_SRC + 1,	\
+	}
+#else
+#define SFE_IPV6_NF_POST_ROUTING_HOOK(fn) \
+	{						\
+		.hook = fn,				\
+		.owner = THIS_MODULE,			\
+		.pf = NFPROTO_IPV6,			\
+		.hooknum = NF_INET_POST_ROUTING,	\
+		.priority = NF_IP6_PRI_NAT_SRC + 1,	\
+	}
+#endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 3, 0))
+#define SFE_NF_CT_DEFAULT_ZONE (&nf_ct_zone_dflt)
+#else
+#define SFE_NF_CT_DEFAULT_ZONE NF_CT_DEFAULT_ZONE
+#endif
+
 /*
  * sfe_dev_get_master
  * 	get master of bridge port, and hold it
@@ -54,7 +108,7 @@ static unsigned int __sfe_cm_ipv6_post_routing_hook(unsigned int HOOKNUM, \
 static inline struct net_device *sfe_dev_get_master(struct net_device *dev)
 {
 	struct net_device *master;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0))
 	rcu_read_lock();
 	master = netdev_master_upper_dev_get_rcu(dev);
 	if (master)
@@ -69,7 +123,7 @@ static inline struct net_device *sfe_dev_get_master(struct net_device *dev)
 	return master;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0))
 #define SFE_DEV_EVENT_PTR(PTR) netdev_notifier_info_to_dev(PTR)
 #else
 #define SFE_DEV_EVENT_PTR(PTR) (struct net_device *)(PTR)
@@ -86,7 +140,7 @@ int sfe_cm_device_event(struct notifier_block *this, unsigned long event, void *
  */
 static inline int sfe_cm_propagate_event(struct notifier_block *this, unsigned long event, struct net_device *dev)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0))
        struct netdev_notifier_info info;
 
        netdev_notifier_info_init(&info, dev);
@@ -96,13 +150,13 @@ static inline int sfe_cm_propagate_event(struct notifier_block *this, unsigned l
 #endif
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
 #define SFE_NF_CONN_ACCT(NM) struct nf_conn_acct *NM
 #else
 #define SFE_NF_CONN_ACCT(NM) struct nf_conn_counter *NM
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
 #define SFE_ACCT_COUNTER(NM) ((NM)->counter)
 #else
 #define SFE_ACCT_COUNTER(NM) (NM)

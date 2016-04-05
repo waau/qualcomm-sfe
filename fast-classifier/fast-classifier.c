@@ -30,8 +30,9 @@
 #include <linux/if_bridge.h>
 #include <linux/hashtable.h>
 
-#include "../shortcut-fe/sfe.h"
-#include "../shortcut-fe/sfe_cm.h"
+#include <sfe_backport.h>
+#include <sfe.h>
+#include <sfe_cm.h>
 #include "fast-classifier.h"
 
 /*
@@ -62,8 +63,10 @@ static struct nla_policy fast_classifier_genl_policy[FAST_CLASSIFIER_A_MAX + 1] 
 				    },
 };
 
-static struct genl_multicast_group fast_classifier_genl_mcgrp = {
-	.name = FAST_CLASSIFIER_GENL_MCGRP,
+static struct genl_multicast_group fast_classifier_genl_mcgrp[] = {
+	{
+		.name = FAST_CLASSIFIER_GENL_MCGRP,
+	},
 };
 
 static struct genl_family fast_classifier_gnl_family = {
@@ -75,6 +78,7 @@ static struct genl_family fast_classifier_gnl_family = {
 };
 
 static int fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info);
+static int fast_classifier_nl_genl_msg_DUMP(struct sk_buff *skb, struct netlink_callback *cb);
 
 static struct genl_ops fast_classifier_gnl_ops[] = {
 	{
@@ -89,14 +93,14 @@ static struct genl_ops fast_classifier_gnl_ops[] = {
 		.flags = 0,
 		.policy = fast_classifier_genl_policy,
 		.doit = NULL,
-		.dumpit = NULL,
+		.dumpit = fast_classifier_nl_genl_msg_DUMP,
 	},
 	{
 		.cmd = FAST_CLASSIFIER_C_DONE,
 		.flags = 0,
 		.policy = fast_classifier_genl_policy,
 		.doit = NULL,
-		.dumpit = NULL,
+		.dumpit = fast_classifier_nl_genl_msg_DUMP,
 	},
 };
 
@@ -144,8 +148,10 @@ int fast_classifier_recv(struct sk_buff *skb)
 {
 	struct net_device *dev;
 #if (SFE_HOOK_ABOVE_BRIDGE)
+	struct net_device *master_dev = NULL;
 	struct in_device *in_dev;
 #endif
+	int ret = 0;
 
 	/*
 	 * We know that for the vast majority of packets we need the transport
@@ -162,7 +168,7 @@ int fast_classifier_recv(struct sk_buff *skb)
 	 */
 	if (skip_to_bridge_ingress &&
 	   (dev->priv_flags & IFF_BRIDGE_PORT)) {
-		dev = dev->master;
+		dev = master_dev = sfe_dev_get_master(dev);
 	}
 
 	/*
@@ -171,7 +177,7 @@ int fast_classifier_recv(struct sk_buff *skb)
 	in_dev = (struct in_device *)dev->ip_ptr;
 	if (unlikely(!in_dev)) {
 		DEBUG_TRACE("no IP processing for device: %s\n", dev->name);
-		return 0;
+		goto rx_exit;
 	}
 
 	/*
@@ -180,7 +186,7 @@ int fast_classifier_recv(struct sk_buff *skb)
 	 */
 	if (unlikely(!in_dev->ifa_list)) {
 		DEBUG_TRACE("no IP address for device: %s\n", dev->name);
-		return 0;
+		goto rx_exit;
 	}
 #endif
 
@@ -188,11 +194,18 @@ int fast_classifier_recv(struct sk_buff *skb)
 	 * We're only interested in IP packets.
 	 */
 	if (likely(htons(ETH_P_IP) == skb->protocol)) {
-		return sfe_ipv4_recv(dev, skb);
+		ret = sfe_ipv4_recv(dev, skb);
+	} else {
+		DEBUG_TRACE("not IP packet\n");
 	}
 
-	DEBUG_TRACE("not IP packet\n");
-	return 0;
+rx_exit:
+#if (SFE_HOOK_ABOVE_BRIDGE)
+	if (master_dev) {
+		dev_put(master_dev);
+	}
+#endif
+	return ret;
 }
 
 /*
@@ -225,7 +238,7 @@ static bool fast_classifier_find_dev_and_mac_addr(uint32_t addr, struct net_devi
 	dst = (struct dst_entry *)rt;
 
 	rcu_read_lock();
-	neigh = dst_get_neighbour_noref(dst);
+	neigh = dst_neigh_lookup(dst, &addr);
 	if (unlikely(!neigh)) {
 		rcu_read_unlock();
 		dst_release(dst);
@@ -234,6 +247,7 @@ static bool fast_classifier_find_dev_and_mac_addr(uint32_t addr, struct net_devi
 
 	if (unlikely(!(neigh->nud_state & NUD_VALID))) {
 		rcu_read_unlock();
+		neigh_release(neigh);
 		dst_release(dst);
 		return false;
 	}
@@ -241,6 +255,7 @@ static bool fast_classifier_find_dev_and_mac_addr(uint32_t addr, struct net_devi
 	mac_dev = neigh->dev;
 	if (!mac_dev) {
 		rcu_read_unlock();
+		neigh_release(neigh);
 		dst_release(dst);
 		return false;
 	}
@@ -250,7 +265,7 @@ static bool fast_classifier_find_dev_and_mac_addr(uint32_t addr, struct net_devi
 	dev_hold(mac_dev);
 	*dev = mac_dev;
 	rcu_read_unlock();
-
+	neigh_release(neigh);
 	dst_release(dst);
 
 	return true;
@@ -362,7 +377,11 @@ static void fast_classifier_send_genl_msg(int msg, struct fast_classifier_tuple 
 		return;
 	}
 
-	rc = genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp.id, GFP_ATOMIC);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
+	rc = genlmsg_multicast(&fast_classifier_gnl_family, skb, 0, 0, GFP_ATOMIC);
+#else
+	rc = genlmsg_multicast(skb, 0, fast_classifier_genl_mcgrp[0].id, GFP_ATOMIC);
+#endif
 	switch (msg) {
 	case FAST_CLASSIFIER_C_OFFLOADED:
 		if (rc == 0) {
@@ -406,9 +425,11 @@ __fast_classifier_find_conn(u32 key,
 {
 	struct sfe_connection_create *p_sic;
 	struct sfe_connection *conn;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0))
 	struct hlist_node *node;
+#endif
 
-	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+	sfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %pI4 dst_ip_xlate: %pI4, src_port: %d, dst_port_xlate: %d\n",
 			    p_sic->protocol,
@@ -441,7 +462,6 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 	struct nlattr *na;
 	struct fast_classifier_tuple *fc_msg;
 	struct sfe_connection *conn;
-	unsigned long flags;
 
 	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
@@ -517,6 +537,16 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 	return 0;
 }
 
+/*
+ * fast_classifier_nl_genl_msg_DUMP()
+ *	ignore fast_classifier_messages OFFLOADED and DONE
+ */
+static int fast_classifier_nl_genl_msg_DUMP(struct sk_buff *skb,
+					    struct netlink_callback *cb)
+{
+	return 0;
+}
+
 /* auto offload connection once we have this many packets*/
 static int offload_at_pkts = 128;
 
@@ -524,11 +554,7 @@ static int offload_at_pkts = 128;
  * fast_classifier_ipv4_post_routing_hook()
  *	Called for packets about to leave the box - either locally generated or forwarded from another interface
  */
-static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
-						  struct sk_buff *skb,
-						  const struct net_device *in_unused,
-						  const struct net_device *out,
-						  int (*okfn)(struct sk_buff *))
+fast_classifier_ipv4_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 {
 	int ret;
 	struct sfe_connection_create sic;
@@ -544,9 +570,10 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	struct nf_conntrack_tuple orig_tuple;
 	struct nf_conntrack_tuple reply_tuple;
 	struct sfe_connection *conn;
-	unsigned long flags;
 	u32 key;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0))
 	struct hlist_node *node;
+#endif
 
 	/*
 	 * Don't process broadcast or multicast packets.
@@ -664,7 +691,7 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 			sic.src_port, sic.dest_port);
 	spin_lock_bh(&sfe_connections_lock);
 	key = fc_conn_hash(sic.src_ip.ip, sic.dest_ip.ip, sic.src_port, sic.dest_port);
-	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+	sfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE("\t\t-> COMPARING: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d...",
 				p_sic->protocol, &p_sic->src_ip, &p_sic->dest_ip,
@@ -783,24 +810,22 @@ static unsigned int fast_classifier_ipv4_post_routing_hook(unsigned int hooknum,
 	 * the case then find the bridge interface instead.
 	 */
 	if (src_dev->priv_flags & IFF_BRIDGE_PORT) {
-		src_br_dev = src_dev->master;
+		src_br_dev = sfe_dev_get_master(src_dev);
 		if (!src_br_dev) {
 			DEBUG_TRACE("no bridge found for: %s\n", src_dev->name);
 			goto done2;
 		}
 
-		dev_hold(src_br_dev);
 		src_dev = src_br_dev;
 	}
 
 	if (dest_dev->priv_flags & IFF_BRIDGE_PORT) {
-		dest_br_dev = dest_dev->master;
+		dest_br_dev = sfe_dev_get_master(dest_dev);
 		if (!dest_br_dev) {
 			DEBUG_TRACE("no bridge found for: %s\n", dest_dev->name);
 			goto done3;
 		}
 
-		dev_hold(dest_br_dev);
 		dest_dev = dest_br_dev;
 	}
 #endif
@@ -878,13 +903,14 @@ static void fast_classifier_update_mark(struct sfe_connection_mark *mark)
 {
 	struct sfe_connection *conn;
 	struct sfe_connection_create *p_sic;
-	unsigned long flags;
 	u32 key;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0))
 	struct hlist_node *node;
+#endif
 
 	spin_lock_bh(&sfe_connections_lock);
 	key = fc_conn_hash(mark->src_ip.ip, mark->dest_ip.ip, mark->src_port,  mark->dest_port);
-	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+	sfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		if (p_sic->protocol == mark->protocol &&
 		    p_sic->src_port == mark->src_port &&
@@ -921,11 +947,12 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	struct sfe_connection *conn;
 	struct sfe_connection_create *p_sic;
 	int sfe_found_match = 0;
-	unsigned long flags;
 	struct fast_classifier_tuple fc_msg;
 	int offloaded = 0;
 	u32 key;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0))
 	struct hlist_node *node;
+#endif
 
 	/*
 	 * If we don't have a conntrack entry then we're done.
@@ -1023,7 +1050,7 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	spin_lock_bh(&sfe_connections_lock);
 
 	key = fc_conn_hash(sid.src_ip.ip, sid.dest_ip.ip, sid.src_port, sid.dest_port);
-	hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+	sfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
 		p_sic = conn->sic;
 		DEBUG_TRACE(" -> COMPARING: proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d...",
 				p_sic->protocol, &(p_sic->src_ip), &(p_sic->dest_ip),
@@ -1093,13 +1120,7 @@ static struct nf_ct_event_notifier fast_classifier_conntrack_notifier = {
  * We want to examine packets after NAT translation and any ALG processing.
  */
 static struct nf_hook_ops fast_classifier_ipv4_ops_post_routing[] __read_mostly = {
-	{
-		.hook = fast_classifier_ipv4_post_routing_hook,
-		.owner = THIS_MODULE,
-		.pf = PF_INET,
-		.hooknum = NF_INET_POST_ROUTING,
-		.priority = NF_IP_PRI_NAT_SRC + 1,
-	},
+	SFE_IPV4_NF_POST_ROUTING_HOOK(__fast_classifier_ipv4_post_routing_hook),
 };
 
 /*
@@ -1111,7 +1132,7 @@ static void fast_classifier_sync_rule(struct sfe_connection_sync *sis)
 	struct nf_conntrack_tuple_hash *h;
 	struct nf_conntrack_tuple tuple;
 	struct nf_conn *ct;
-	struct nf_conn_counter *acct;
+	SFE_NF_CONN_ACCT(acct);
 
 	/*
 	 * Create a tuple so as to be able to look up a connection
@@ -1162,7 +1183,7 @@ static void fast_classifier_sync_rule(struct sfe_connection_sync *sis)
 	/*
 	 * Look up conntrack connection
 	 */
-	h = nf_conntrack_find_get(&init_net, NF_CT_DEFAULT_ZONE, &tuple);
+	h = nf_conntrack_find_get(&init_net, SFE_NF_CT_DEFAULT_ZONE, &tuple);
 	if (unlikely(!h)) {
 		DEBUG_TRACE("no connection found\n");
 		return;
@@ -1181,10 +1202,10 @@ static void fast_classifier_sync_rule(struct sfe_connection_sync *sis)
 	acct = nf_conn_acct_find(ct);
 	if (acct) {
 		spin_lock_bh(&ct->lock);
-		atomic64_set(&acct[IP_CT_DIR_ORIGINAL].packets, sis->src_packet_count);
-		atomic64_set(&acct[IP_CT_DIR_ORIGINAL].bytes, sis->src_byte_count);
-		atomic64_set(&acct[IP_CT_DIR_REPLY].packets, sis->dest_packet_count);
-		atomic64_set(&acct[IP_CT_DIR_REPLY].bytes, sis->dest_byte_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].packets, sis->src_packet_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_ORIGINAL].bytes, sis->src_byte_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].packets, sis->dest_packet_count);
+		atomic64_set(&SFE_ACCT_COUNTER(acct)[IP_CT_DIR_REPLY].bytes, sis->dest_byte_count);
 		spin_unlock_bh(&ct->lock);
 	}
 
@@ -1224,7 +1245,7 @@ static void fast_classifier_sync_rule(struct sfe_connection_sync *sis)
  */
 static int fast_classifier_device_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
-	struct net_device *dev = (struct net_device *)ptr;
+	struct net_device *dev = SFE_DEV_EVENT_PTR(ptr);
 
 	switch (event) {
 	case NETDEV_DOWN:
@@ -1243,7 +1264,7 @@ static int fast_classifier_device_event(struct notifier_block *this, unsigned lo
 static int fast_classifier_inet_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = ((struct in_ifaddr *)ptr)->ifa_dev->dev;
-	return fast_classifier_device_event(this, event, dev);
+	return sfe_propagate_dev_event(fast_classifier_device_event, this, event, dev);
 }
 
 /*
@@ -1283,10 +1304,11 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 				      char *buf)
 {
 	size_t len = 0;
-	unsigned long flags;
 	struct sfe_connection *conn;
 	u32 i;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0))
 	struct hlist_node *node;
+#endif
 
 	spin_lock_bh(&sfe_connections_lock);
 	len += scnprintf(buf, PAGE_SIZE - len, "size=%d offload=%d offload_no_match=%d"
@@ -1298,7 +1320,7 @@ static ssize_t fast_classifier_get_debug_info(struct device *dev,
 			atomic_read(&done_msgs),
 			atomic_read(&offloaded_fail_msgs),
 			atomic_read(&done_fail_msgs));
-	hash_for_each(fc_conn_ht, i, node, conn, hl) {
+	sfe_hash_for_each(fc_conn_ht, i, node, conn, hl) {
 		len += scnprintf(buf + len , PAGE_SIZE - len,
 				"o=%d, p=%d [%pM]:%pI4:%u %pI4:%u:[%pM] m=%08x h=%d\n",
 				conn->offloaded,
@@ -1425,24 +1447,34 @@ static int __init fast_classifier_init(void)
 	}
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0))
+	result = genl_register_family_with_ops_groups(&fast_classifier_gnl_family,
+						      fast_classifier_gnl_ops,
+						      fast_classifier_genl_mcgrp);
+	if (result) {
+		DEBUG_ERROR("failed to register genl ops: %d\n", result);
+		goto exit5;
+	}
+#else
 	result = genl_register_family(&fast_classifier_gnl_family);
-	if (result != 0) {
+	if (result) {
 		printk(KERN_CRIT "unable to register genl family\n");
 		goto exit5;
 	}
 
 	result = genl_register_ops(&fast_classifier_gnl_family, fast_classifier_gnl_ops);
-	if (result != 0) {
+	if (result) {
 		printk(KERN_CRIT "unable to register ops\n");
 		goto exit6;
 	}
 
 	result = genl_register_mc_group(&fast_classifier_gnl_family,
-					&fast_classifier_genl_mcgrp);
-	if (result != 0) {
+					fast_classifier_genl_mcgrp);
+	if (result) {
 		printk(KERN_CRIT "unable to register multicast group\n");
 		goto exit6;
 	}
+#endif
 
 	printk(KERN_ALERT "fast-classifier: registered\n");
 
@@ -1517,10 +1549,12 @@ static void __exit fast_classifier_exit(void)
 	 */
 	sfe_ipv4_destroy_all_rules_for_dev(NULL);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0))
 	result = genl_unregister_ops(&fast_classifier_gnl_family, fast_classifier_gnl_ops);
 	if (result != 0) {
 		printk(KERN_CRIT "Unable to unreigster genl_ops\n");
 	}
+#endif
 
 	result = genl_unregister_family(&fast_classifier_gnl_family);
 	if (result != 0) {

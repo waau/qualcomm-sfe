@@ -932,7 +932,7 @@ int sfe_cm_device_event(struct notifier_block *this, unsigned long event, void *
 static int sfe_cm_inet_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = ((struct in_ifaddr *)ptr)->ifa_dev->dev;
-	return sfe_cm_propagate_event(this, event, dev);
+	return sfe_propagate_dev_event(sfe_cm_device_event, this, event, dev);
 }
 
 /*
@@ -941,7 +941,7 @@ static int sfe_cm_inet_event(struct notifier_block *this, unsigned long event, v
 static int sfe_cm_inet6_event(struct notifier_block *this, unsigned long event, void *ptr)
 {
 	struct net_device *dev = ((struct inet6_ifaddr *)ptr)->idev->dev;
-	return sfe_cm_propagate_event(this, event, dev);
+	return sfe_propagate_dev_event(sfe_cm_device_event, this, event, dev);
 }
 
 /*

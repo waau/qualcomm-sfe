@@ -207,3 +207,38 @@ static inline void sfe_ipv6_mark_rule(struct sfe_connection_mark *mark)
 	return;
 }
 #endif
+
+/*
+ * sfe_ipv6_addr_equal()
+ *	compare ipv6 address
+ *
+ * return: 1, equal; 0, no equal
+ */
+static inline int sfe_ipv6_addr_equal(struct sfe_ipv6_addr *a,
+				      struct sfe_ipv6_addr *b)
+{
+	return a->addr[0] == b->addr[0] &&
+	       a->addr[1] == b->addr[1] &&
+	       a->addr[2] == b->addr[2] &&
+	       a->addr[3] == b->addr[3];
+}
+
+/*
+ * sfe_ipv4_addr_equal()
+ *	compare ipv4 address
+ *
+ * return: 1, equal; 0, no equal
+ */
+#define sfe_ipv4_addr_equal(a, b) ((uint32_t)(a) == (uint32_t)(b))
+
+/*
+ * sfe_addr_equal()
+ *	compare ipv4 or ipv6 address
+ *
+ * return: 1, equal; 0, no equal
+ */
+static inline int sfe_addr_equal(sfe_ip_addr_t *a,
+				 sfe_ip_addr_t *b, int is_v4)
+{
+	return is_v4 ? sfe_ipv4_addr_equal(a->ip, b->ip) : sfe_ipv6_addr_equal(a->ip6, b->ip6);
+}

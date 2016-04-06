@@ -44,6 +44,8 @@ static unsigned int FN_NAME(unsigned int HOOKNUM, \
 	sfe_define_post_routing_hook(__sfe_cm_ipv6_post_routing_hook, HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN)
 #define fast_classifier_ipv4_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
 	sfe_define_post_routing_hook(__fast_classifier_ipv4_post_routing_hook, HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN)
+#define fast_classifier_ipv6_post_routing_hook(HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN) \
+	sfe_define_post_routing_hook(__fast_classifier_ipv6_post_routing_hook, HOOKNUM, OPS, SKB, UNUSED, OUT, OKFN)
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
 #define SFE_IPV4_NF_POST_ROUTING_HOOK(fn) \

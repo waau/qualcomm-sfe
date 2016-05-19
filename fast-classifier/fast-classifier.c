@@ -347,7 +347,7 @@ static DEFINE_HASHTABLE(fc_conn_ht, FC_CONN_HASH_ORDER);
 static u32 fc_conn_hash(sfe_ip_addr_t *saddr, sfe_ip_addr_t *daddr,
 			unsigned short sport, unsigned short dport, bool is_v4)
 {
-	uint32_t idx, cnt = (is_v4 ? sizeof(saddr->ip) : sizeof(saddr->ip6));
+	uint32_t idx, cnt = (is_v4 ? sizeof(saddr->ip) : sizeof(saddr->ip6))/sizeof(uint32_t);
 	uint32_t hash = 0;
 
 	for (idx = 0; idx < cnt; idx++) {

@@ -529,8 +529,10 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 	na = info->attrs[FAST_CLASSIFIER_A_TUPLE];
 	fc_msg = nla_data(na);
 
-	DEBUG_TRACE((fc_msg->ethertype == AF_INET ? "want to offload: key=%u, %d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n" : "want to offload: key=%u, %d, %pI6, %pI6, %d, %d SMAC=%pM DMAC=%pM\n"),
-		    key,
+	DEBUG_TRACE((fc_msg->ethertype == AF_INET ?
+		"want to offload: %d-%d, %pI4, %pI4, %d, %d SMAC=%pM DMAC=%pM\n" :
+		"want to offload: %d-%d, %pI6, %pI6, %d, %d SMAC=%pM DMAC=%pM\n"),
+		    fc_msg->ethertype,
 		    fc_msg->proto,
 		    &(fc_msg->src_saddr),
 		    &(fc_msg->dst_saddr),

@@ -188,6 +188,35 @@ inline bool sfe_drv_dev_is_layer_3_interface(struct net_device *dev, bool check_
 }
 
 /*
+ * sfe_drv_clean_response_msg_by_type()
+ * 	clean response message in queue when ECM exit
+ *
+ * @param sfe_drv_ctx sfe driver context
+ * @param msg_type message type, ipv4 or ipv6
+ */
+static void sfe_drv_clean_response_msg_by_type(struct sfe_drv_ctx_instance_internal *sfe_drv_ctx, sfe_drv_msg_types_t msg_type)
+{
+	struct sfe_drv_response_msg *response, *tmp;
+
+	if (!sfe_drv_ctx) {
+		return;
+	}
+
+	spin_lock_bh(&sfe_drv_ctx->lock);
+	list_for_each_entry_safe(response, tmp, &sfe_drv_ctx->msg_queue, node) {
+		if (response->type == msg_type) {
+			list_del(&response->node);
+			/*
+			 * free response message
+			 */
+			kfree(response);
+		}
+	}
+	spin_unlock_bh(&sfe_drv_ctx->lock);
+
+}
+
+/*
  * sfe_drv_process_response_msg()
  * 	send all pending response message to ECM by calling callback function included in message
  *
@@ -696,6 +725,8 @@ void sfe_drv_ipv4_notify_unregister(void)
 	}
 	spin_unlock_bh(&sfe_drv_ctx->lock);
 
+	sfe_drv_clean_response_msg_by_type(sfe_drv_ctx, SFE_DRV_MSG_TYPE_IPV4);
+
 	return;
 }
 EXPORT_SYMBOL(sfe_drv_ipv4_notify_unregister);
@@ -1079,6 +1110,8 @@ void sfe_drv_ipv6_notify_unregister(void)
 		sfe_drv_ctx->ipv6_stats_sync_data = NULL;
 	}
 	spin_unlock_bh(&sfe_drv_ctx->lock);
+
+	sfe_drv_clean_response_msg_by_type(sfe_drv_ctx, SFE_DRV_MSG_TYPE_IPV6);
 
 	return;
 }

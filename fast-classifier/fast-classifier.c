@@ -503,9 +503,70 @@ fast_classifier_find_conn(sfe_ip_addr_t *saddr, sfe_ip_addr_t *daddr,
 
 		if (p_sic->protocol == proto &&
 		    p_sic->src_port == sport &&
+		    p_sic->dest_port == dport &&
+		    sfe_addr_equal(&p_sic->src_ip, saddr, is_v4) &&
+		    sfe_addr_equal(&p_sic->dest_ip, daddr, is_v4)) {
+			return conn;
+		}
+	}
+
+	DEBUG_TRACE("connection not found\n");
+	return NULL;
+}
+
+/*
+ * fast_classifier_sb_find_conn()
+ * 	find a connection object in the hash table according to information of packet
+ *	if not found, reverse the tuple and try again.
+ *      @pre the sfe_connection_lock must be held before calling this function
+ */
+static struct sfe_connection *
+fast_classifier_sb_find_conn(sfe_ip_addr_t *saddr, sfe_ip_addr_t *daddr,
+			  unsigned short sport, unsigned short dport,
+			  unsigned char proto, bool is_v4)
+{
+	struct sfe_connection_create *p_sic;
+	struct sfe_connection *conn;
+	uint32_t key;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 9, 0))
+	struct hlist_node *node;
+#endif
+
+	key = fc_conn_hash(saddr, daddr, sport, dport, is_v4);
+
+	sfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+		if (conn->is_v4 != is_v4) {
+			continue;
+		}
+
+		p_sic = conn->sic;
+
+		if (p_sic->protocol == proto &&
+		    p_sic->src_port == sport &&
 		    p_sic->dest_port_xlate == dport &&
 		    sfe_addr_equal(&p_sic->src_ip, saddr, is_v4) &&
 		    sfe_addr_equal(&p_sic->dest_ip_xlate, daddr, is_v4)) {
+			return conn;
+		}
+	}
+
+	/*
+	 * Reverse the tuple and try again
+	 */
+	key = fc_conn_hash(daddr, saddr, dport, sport, is_v4);
+
+	sfe_hash_for_each_possible(fc_conn_ht, conn, node, hl, key) {
+		if (conn->is_v4 != is_v4) {
+			continue;
+		}
+
+		p_sic = conn->sic;
+
+		if (p_sic->protocol == proto &&
+		    p_sic->src_port == dport &&
+		    p_sic->dest_port_xlate == sport &&
+		    sfe_addr_equal(&p_sic->src_ip, daddr, is_v4) &&
+		    sfe_addr_equal(&p_sic->dest_ip_xlate, saddr, is_v4)) {
 			return conn;
 		}
 	}
@@ -542,26 +603,17 @@ fast_classifier_offload_genl_msg(struct sk_buff *skb, struct genl_info *info)
 		    fc_msg->dmac);
 
 	spin_lock_bh(&sfe_connections_lock);
-	conn = fast_classifier_find_conn((sfe_ip_addr_t *)&fc_msg->src_saddr,
+	conn = fast_classifier_sb_find_conn((sfe_ip_addr_t *)&fc_msg->src_saddr,
 					 (sfe_ip_addr_t *)&fc_msg->dst_saddr,
 					 fc_msg->sport,
 					 fc_msg->dport,
 					 fc_msg->proto,
 					 (fc_msg->ethertype == AF_INET));
 	if (conn == NULL) {
-		/* reverse the tuple and try again */
-		conn = fast_classifier_find_conn((sfe_ip_addr_t *)&fc_msg->dst_saddr,
-						 (sfe_ip_addr_t *)&fc_msg->src_saddr,
-						 fc_msg->dport,
-						 fc_msg->sport,
-						 fc_msg->proto,
-						 (fc_msg->ethertype == AF_INET));
-		if (conn == NULL) {
-			spin_unlock_bh(&sfe_connections_lock);
-			DEBUG_TRACE("REQUEST OFFLOAD NO MATCH\n");
-			atomic_inc(&offload_no_match_msgs);
-			return 0;
-		}
+		spin_unlock_bh(&sfe_connections_lock);
+		DEBUG_TRACE("REQUEST OFFLOAD NO MATCH\n");
+		atomic_inc(&offload_no_match_msgs);
+		return 0;
 	}
 
 	if (conn->offloaded != 0) {

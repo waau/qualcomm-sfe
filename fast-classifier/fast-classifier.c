@@ -576,6 +576,45 @@ fast_classifier_sb_find_conn(sfe_ip_addr_t *saddr, sfe_ip_addr_t *daddr,
 }
 
 /*
+ * fast_classifier_add_conn()
+ *	add a connection object in the hash table if no duplicate
+ *	@conn connection to add
+ *	@return conn if successful, NULL if duplicate
+ */
+static struct sfe_connection *
+fast_classifier_add_conn(struct sfe_connection *conn)
+{
+	struct sfe_connection_create *sic = conn->sic;
+	uint32_t key;
+
+	spin_lock_bh(&sfe_connections_lock);
+	if (fast_classifier_find_conn(&sic->src_ip, &sic->dest_ip, sic->src_port,
+					sic->dest_port, sic->protocol, conn->is_v4)) {
+		spin_unlock_bh(&sfe_connections_lock);
+		return NULL;
+	}
+
+	key = fc_conn_hash(&sic->src_ip, &sic->dest_ip,
+			   sic->src_port, sic->dest_port, conn->is_v4);
+
+	hash_add(fc_conn_ht, &conn->hl, key);
+	sfe_connections_size++;
+	spin_unlock_bh(&sfe_connections_lock);
+
+	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", sfe_connections_size);
+
+	if (conn->is_v4) {
+		DEBUG_TRACE("new offloadable: key: %u proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
+				key, sic->protocol, &(sic->src_ip), &(sic->dest_ip), sic->src_port, sic->dest_port);
+	} else {
+		DEBUG_TRACE("new offloadable: key: %u proto: %d src_ip: %pI6 dst_ip: %pI6, src_port: %d, dst_port: %d\n",
+				key, sic->protocol, &(sic->src_ip), &(sic->dest_ip), sic->src_port, sic->dest_port);
+	}
+
+	return conn;
+}
+
+/*
  * fast_classifier_offload_genl_msg()
  * 	Called from user space to offload a connection
  */
@@ -675,7 +714,6 @@ static unsigned int fast_classifier_post_routing(struct sk_buff *skb, bool is_v4
 	struct nf_conntrack_tuple orig_tuple;
 	struct nf_conntrack_tuple reply_tuple;
 	struct sfe_connection *conn;
-	u32 key;
 
 	/*
 	 * Don't process broadcast or multicast packets.
@@ -714,6 +752,15 @@ static unsigned int fast_classifier_post_routing(struct sk_buff *skb, bool is_v4
 	 */
 	if (unlikely(nf_ct_is_untracked(ct))) {
 		DEBUG_TRACE("untracked connection\n");
+		return NF_ACCEPT;
+	}
+
+	/*
+	 * Unconfirmed connection may be dropped by Linux at the final step,
+	 * So we don't process unconfirmed connections.
+	 */
+	if (!nf_ct_is_confirmed(ct)) {
+		DEBUG_TRACE("unconfirmed connection\n");
 		return NF_ACCEPT;
 	}
 
@@ -1007,23 +1054,10 @@ static unsigned int fast_classifier_post_routing(struct sk_buff *skb, bool is_v4
 	memcpy(p_sic, &sic, sizeof(sic));
 	conn->sic = p_sic;
 	conn->ct = ct;
-	sfe_connections_size++;
-	DEBUG_TRACE(" -> adding item to sfe_connections, new size: %d\n", sfe_connections_size);
-	spin_lock_bh(&sfe_connections_lock);
-	key = fc_conn_hash(&conn->sic->src_ip,
-			   &conn->sic->dest_ip,
-			   conn->sic->src_port,
-			   conn->sic->dest_port,
-			   is_v4);
-	hash_add(fc_conn_ht, &conn->hl, key);
-	spin_unlock_bh(&sfe_connections_lock);
 
-	if (is_v4) {
-		DEBUG_TRACE("new offloadable: key: %u proto: %d src_ip: %pI4 dst_ip: %pI4, src_port: %d, dst_port: %d\n",
-				key, p_sic->protocol, &(p_sic->src_ip), &(p_sic->dest_ip), p_sic->src_port, p_sic->dest_port);
-	} else {
-		DEBUG_TRACE("new offloadable: key: %u proto: %d src_ip: %pI6 dst_ip: %pI6, src_port: %d, dst_port: %d\n",
-				key, p_sic->protocol, &(p_sic->src_ip), &(p_sic->dest_ip), p_sic->src_port, p_sic->dest_port);
+	if (!fast_classifier_add_conn(conn)) {
+		kfree(conn->sic);
+		kfree(conn);
 	}
 
 	/*
@@ -1218,9 +1252,9 @@ static int fast_classifier_conntrack_event(unsigned int events, struct nf_ct_eve
 	if (conn) {
 		DEBUG_TRACE("Free connection\n");
 
-		kfree(conn->sic);
 		hash_del(&conn->hl);
 		sfe_connections_size--;
+		kfree(conn->sic);
 		kfree(conn);
 	}
 
@@ -1345,7 +1379,9 @@ static void fast_classifier_sync_rule(struct sfe_connection_sync *sis)
 	 * Only update if this is not a fixed timeout
 	 */
 	if (!test_bit(IPS_FIXED_TIMEOUT_BIT, &ct->status)) {
+		spin_lock_bh(&ct->lock);
 		ct->timeout.expires += sis->delta_jiffies;
+		spin_unlock_bh(&ct->lock);
 	}
 
 	acct = nf_conn_acct_find(ct);

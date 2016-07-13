@@ -935,11 +935,13 @@ sfe_tx_status_t sfe_drv_create_ipv6_rule_msg(struct sfe_drv_ctx_instance_interna
 	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_QOS_VALID) {
 		sic.src_priority = msg->msg.rule_create.qos_rule.flow_qos_tag;
 		sic.dest_priority = msg->msg.rule_create.qos_rule.return_qos_tag;
+		sic.flags |= SFE_CREATE_FLAG_REMARK_PRIORITY;
 	}
 
 	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_DSCP_MARKING_VALID) {
 		sic.src_dscp = msg->msg.rule_create.dscp_rule.flow_dscp;
 		sic.dest_dscp = msg->msg.rule_create.dscp_rule.return_dscp;
+		sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
 	}
 
 #ifdef CONFIG_XFRM

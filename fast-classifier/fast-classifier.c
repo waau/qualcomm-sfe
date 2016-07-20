@@ -844,6 +844,8 @@ static unsigned int fast_classifier_post_routing(struct sk_buff *skb, bool is_v4
 		return NF_ACCEPT;
 	}
 
+	memset(&sic, 0, sizeof(sic));
+
 	/*
 	 * Look up the details of our connection in conntrack.
 	 *

@@ -1,7 +1,7 @@
 /*
  * User space header to send message to the fast classifier
  *
- * Copyright (c) 2013 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013,2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -26,6 +26,7 @@ enum {
 	FAST_CLASSIFIER_A_TUPLE,
 	__FAST_CLASSIFIER_A_MAX,
 };
+
 #define FAST_CLASSIFIER_A_MAX (__FAST_CLASSIFIER_A_MAX - 1)
 
 enum {
@@ -35,6 +36,7 @@ enum {
 	FAST_CLASSIFIER_C_DONE,
 	__FAST_CLASSIFIER_C_MAX,
 };
+
 #define FAST_CLASSIFIER_C_MAX (__FAST_CLASSIFIER_C_MAX - 1)
 
 struct fast_classifier_tuple {

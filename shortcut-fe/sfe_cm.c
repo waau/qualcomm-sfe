@@ -93,26 +93,13 @@ struct sfe_cm {
 	/*
 	 * Callback notifiers.
 	 */
-	struct notifier_block dev_notifier;
-					/* Device notifier */
-	struct notifier_block inet_notifier;
-					/* IPv4 notifier */
-	struct notifier_block inet6_notifier;
-					/* IPv6 notifier */
-	uint32_t exceptions[SFE_CM_EXCEPTION_MAX];
+	struct notifier_block dev_notifier;	/* Device notifier */
+	struct notifier_block inet_notifier;	/* IPv4 notifier */
+	struct notifier_block inet6_notifier;	/* IPv6 notifier */
+	u32 exceptions[SFE_CM_EXCEPTION_MAX];
 };
 
-struct sfe_cm __sc;
-
-/*
- * Expose the hook for the receive processing.
- */
-extern int (*athrs_fast_nat_recv)(struct sk_buff *skb);
-
-/*
- * Expose what should be a static flag in the TCP connection tracker.
- */
-extern int nf_ct_tcp_no_window_check;
+static struct sfe_cm __sc;
 
 /*
  * sfe_cm_incr_exceptions()
@@ -150,7 +137,6 @@ int sfe_cm_recv(struct sk_buff *skb)
 	 * We're only interested in IPv4 and IPv6 packets.
 	 */
 	if (likely(htons(ETH_P_IP) == skb->protocol)) {
-#if (SFE_HOOK_ABOVE_BRIDGE)
 		struct in_device *in_dev;
 
 		/*
@@ -170,13 +156,11 @@ int sfe_cm_recv(struct sk_buff *skb)
 			DEBUG_TRACE("no IP address for device: %s\n", dev->name);
 			return 0;
 		}
-#endif
 
 		return sfe_ipv4_recv(dev, skb);
 	}
 
 	if (likely(htons(ETH_P_IPV6) == skb->protocol)) {
-#if (SFE_HOOK_ABOVE_BRIDGE)
 		struct inet6_dev *in_dev;
 
 		/*
@@ -196,7 +180,6 @@ int sfe_cm_recv(struct sk_buff *skb)
 			DEBUG_TRACE("no IPv6 address for device: %s\n", dev->name);
 			return 0;
 		}
-#endif
 
 		return sfe_ipv6_recv(dev, skb);
 	}
@@ -215,7 +198,7 @@ int sfe_cm_recv(struct sk_buff *skb)
  * structure, obtain the hardware address.  This means this function also
  * works if the neighbours are routers too.
  */
-static bool sfe_cm_find_dev_and_mac_addr(sfe_ip_addr_t *addr, struct net_device **dev, uint8_t *mac_addr, int is_v4)
+static bool sfe_cm_find_dev_and_mac_addr(sfe_ip_addr_t *addr, struct net_device **dev, u8 *mac_addr, int is_v4)
 {
 	struct neighbour *neigh;
 	struct rtable *rt;
@@ -413,7 +396,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 */
 	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
 	reply_tuple = ct->tuplehash[IP_CT_DIR_REPLY].tuple;
-	sic.protocol = (int32_t)orig_tuple.dst.protonum;
+	sic.protocol = (s32)orig_tuple.dst.protonum;
 
 	sic.flags = 0;
 
@@ -421,7 +404,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * Get addressing information, non-NAT first
 	 */
 	if (likely(is_v4)) {
-		uint32_t dscp;
+		u32 dscp;
 
 		sic.src_ip.ip = (__be32)orig_tuple.src.u3.ip;
 		sic.dest_ip.ip = (__be32)orig_tuple.dst.u3.ip;
@@ -441,11 +424,12 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 
 		dscp = ipv4_get_dsfield(ip_hdr(skb)) >> XT_DSCP_SHIFT;
 		if (dscp) {
-			sic.src_dscp = sic.dest_dscp = dscp;
+			sic.dest_dscp = dscp;
+			sic.src_dscp = sic.dest_dscp;
 			sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
 		}
 	} else {
-		uint32_t dscp;
+		u32 dscp;
 
 		sic.src_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.src.u3.in6);
 		sic.dest_ip.ip6[0] = *((struct sfe_ipv6_addr *)&orig_tuple.dst.u3.in6);
@@ -466,7 +450,8 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 
 		dscp = ipv6_get_dsfield(ipv6_hdr(skb)) >> XT_DSCP_SHIFT;
 		if (dscp) {
-			sic.src_dscp = sic.dest_dscp = dscp;
+			sic.dest_dscp = dscp;
+			sic.src_dscp = sic.dest_dscp;
 			sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
 		}
 	}
@@ -485,6 +470,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		sic.dest_td_max_window = ct->proto.tcp.seen[1].td_maxwin;
 		sic.dest_td_end = ct->proto.tcp.seen[1].td_end;
 		sic.dest_td_max_end = ct->proto.tcp.seen[1].td_maxend;
+
 		if (nf_ct_tcp_no_window_check
 		    || (ct->proto.tcp.seen[0].flags & IP_CT_TCP_FLAG_BE_LIBERAL)
 		    || (ct->proto.tcp.seen[1].flags & IP_CT_TCP_FLAG_BE_LIBERAL)) {
@@ -540,7 +526,7 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 */
 	if (unlikely(skb->sp)) {
 		if (sic.protocol == IPPROTO_TCP &&
-			!(sic.flags & SFE_CREATE_FLAG_NO_SEQ_CHECK)) {
+		    !(sic.flags & SFE_CREATE_FLAG_NO_SEQ_CHECK)) {
 			return NF_ACCEPT;
 		}
 
@@ -556,7 +542,8 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 	 * Get QoS information
 	 */
 	if (skb->priority) {
-		sic.src_priority = sic.dest_priority = skb->priority;
+		sic.dest_priority = skb->priority;
+		sic.src_priority = sic.dest_priority;
 		sic.flags |= SFE_CREATE_FLAG_REMARK_PRIORITY;
 	}
 
@@ -588,33 +575,6 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 		goto done1;
 	}
 
-#if (!SFE_HOOK_ABOVE_BRIDGE)
-	/*
-	 * Now our devices may actually be a bridge interface.  If that's
-	 * the case then we need to hunt down the underlying interface.
-	 */
-	if (src_dev->priv_flags & IFF_EBRIDGE) {
-		src_br_dev = br_port_dev_get(src_dev, sic.src_mac);
-		if (!src_br_dev) {
-			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
-			DEBUG_TRACE("no port found on bridge\n");
-			goto done2;
-		}
-
-		src_dev = src_br_dev;
-	}
-
-	if (dest_dev->priv_flags & IFF_EBRIDGE) {
-		dest_br_dev = br_port_dev_get(dest_dev, sic.dest_mac_xlate);
-		if (!dest_br_dev) {
-			sfe_cm_incr_exceptions(SFE_CM_EXCEPTION_NO_BRIDGE);
-			DEBUG_TRACE("no port found on bridge\n");
-			goto done3;
-		}
-
-		dest_dev = dest_br_dev;
-	}
-#else
 	/*
 	 * Our devices may actually be part of a bridge interface.  If that's
 	 * the case then find the bridge interface instead.
@@ -640,7 +600,6 @@ static unsigned int sfe_cm_post_routing(struct sk_buff *skb, int is_v4)
 
 		dest_dev = dest_br_dev;
 	}
-#endif
 
 	sic.src_dev = src_dev;
 	sic.dest_dev = dest_dev;
@@ -693,7 +652,6 @@ sfe_cm_ipv6_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
 	return sfe_cm_post_routing(skb, false);
 }
 
-
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 /*
  * sfe_cm_conntrack_event()
@@ -701,7 +659,7 @@ sfe_cm_ipv6_post_routing_hook(hooknum, ops, skb, in_unused, out, okfn)
  */
 #ifdef CONFIG_NF_CONNTRACK_CHAIN_EVENTS
 static int sfe_cm_conntrack_event(struct notifier_block *this,
-			unsigned long events, void *ptr)
+				  unsigned long events, void *ptr)
 #else
 static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 #endif
@@ -738,7 +696,7 @@ static int sfe_cm_conntrack_event(unsigned int events, struct nf_ct_event *item)
 	}
 
 	orig_tuple = ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple;
-	sid.protocol = (int32_t)orig_tuple.dst.protonum;
+	sid.protocol = (s32)orig_tuple.dst.protonum;
 
 	/*
 	 * Extract information from the conntrack connection.  We're only interested
@@ -822,7 +780,7 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 	memset(&tuple, 0, sizeof(tuple));
 	tuple.src.u.all = (__be16)sis->src_port;
 	tuple.dst.dir = IP_CT_DIR_ORIGINAL;
-	tuple.dst.protonum = (uint8_t)sis->protocol;
+	tuple.dst.protonum = (u8)sis->protocol;
 	tuple.dst.u.all = (__be16)sis->dest_port;
 
 	if (sis->is_v6) {
@@ -882,19 +840,19 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 		if (ct->proto.tcp.seen[0].td_maxwin < sis->src_td_max_window) {
 			ct->proto.tcp.seen[0].td_maxwin = sis->src_td_max_window;
 		}
-		if ((int32_t)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
+		if ((s32)(ct->proto.tcp.seen[0].td_end - sis->src_td_end) < 0) {
 			ct->proto.tcp.seen[0].td_end = sis->src_td_end;
 		}
-		if ((int32_t)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
+		if ((s32)(ct->proto.tcp.seen[0].td_maxend - sis->src_td_max_end) < 0) {
 			ct->proto.tcp.seen[0].td_maxend = sis->src_td_max_end;
 		}
 		if (ct->proto.tcp.seen[1].td_maxwin < sis->dest_td_max_window) {
 			ct->proto.tcp.seen[1].td_maxwin = sis->dest_td_max_window;
 		}
-		if ((int32_t)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
+		if ((s32)(ct->proto.tcp.seen[1].td_end - sis->dest_td_end) < 0) {
 			ct->proto.tcp.seen[1].td_end = sis->dest_td_end;
 		}
-		if ((int32_t)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
+		if ((s32)(ct->proto.tcp.seen[1].td_maxend - sis->dest_td_max_end) < 0) {
 			ct->proto.tcp.seen[1].td_maxend = sis->dest_td_max_end;
 		}
 		spin_unlock_bh(&ct->lock);
@@ -1036,7 +994,7 @@ static int __init sfe_cm_init(void)
 	/*
 	 * Hook the receive path in the network stack.
 	 */
-	BUG_ON(athrs_fast_nat_recv != NULL);
+	BUG_ON(athrs_fast_nat_recv);
 	RCU_INIT_POINTER(athrs_fast_nat_recv, sfe_cm_recv);
 
 	/*
@@ -1048,9 +1006,8 @@ static int __init sfe_cm_init(void)
 
 #ifdef CONFIG_NF_CONNTRACK_EVENTS
 exit4:
-#endif
 	nf_unregister_hooks(sfe_cm_ops_post_routing, ARRAY_SIZE(sfe_cm_ops_post_routing));
-
+#endif
 exit3:
 	unregister_inet6addr_notifier(&sc->inet6_notifier);
 	unregister_inetaddr_notifier(&sc->inet_notifier);
@@ -1109,7 +1066,6 @@ static void __exit sfe_cm_exit(void)
 module_init(sfe_cm_init)
 module_exit(sfe_cm_exit)
 
-MODULE_AUTHOR("Qualcomm Atheros Inc.");
 MODULE_DESCRIPTION("Shortcut Forwarding Engine - Connection Manager");
 MODULE_LICENSE("Dual BSD/GPL");
 

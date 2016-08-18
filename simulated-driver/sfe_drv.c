@@ -2,7 +2,7 @@
  * sfe_drv.c
  *	simulated sfe driver for shortcut forwarding engine.
  *
- * Copyright (c) 2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015,2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -104,8 +104,10 @@ struct sfe_drv_ctx_instance_internal {
 	sfe_ipv6_msg_callback_t __rcu ipv6_stats_sync_cb;	/* callback to call to sync ipv6 statistics */
 	void *ipv6_stats_sync_data;	/* argument for above callback: ipv6_stats_sync_cb */
 
-	uint32_t exceptions[SFE_DRV_EXCEPTION_MAX];		/* statistics for exception */
-} __sfe_drv_ctx;
+	u32 exceptions[SFE_DRV_EXCEPTION_MAX];		/* statistics for exception */
+};
+
+static struct sfe_drv_ctx_instance_internal __sfe_drv_ctx;
 
 /*
  * convert public sfe driver context to internal context
@@ -115,11 +117,6 @@ struct sfe_drv_ctx_instance_internal {
  * convert internal sfe driver context to public context
  */
 #define SFE_DRV_CTX_TO_PUBLIC(intrv) (struct sfe_drv_ctx_instance *)(intrv)
-
-/*
- * Expose the hook for the receive processing.
- */
-extern int (*athrs_fast_nat_recv)(struct sk_buff *skb);
 
 /*
  * sfe_drv_incr_exceptions()
@@ -326,14 +323,14 @@ static inline void sfe_drv_enqueue_msg(struct sfe_drv_ctx_instance_internal *sfe
  * @param cb callback function to process repsonse of this message
  * @param app_data argument for above callback function
  */
-static void sfe_cmn_msg_init(struct sfe_cmn_msg *ncm, uint16_t if_num, uint32_t type,  uint32_t len, void *cb, void *app_data)
+static void sfe_cmn_msg_init(struct sfe_cmn_msg *ncm, u16 if_num, u32 type,  u32 len, void *cb, void *app_data)
 {
 	ncm->interface = if_num;
 	ncm->version = SFE_MESSAGE_VERSION;
 	ncm->type = type;
 	ncm->len = len;
-	ncm->cb = (uint32_t)cb;
-	ncm->app_data = (uint32_t)app_data;
+	ncm->cb = (u32)cb;
+	ncm->app_data = (u32)app_data;
 }
 
 /*
@@ -366,7 +363,7 @@ static void sfe_drv_ipv4_stats_sync_callback(struct sfe_connection_sync *sis)
 	/*
 	 * fill connection specific information
 	 */
-	sync_msg->protocol = (uint8_t)sis->protocol;
+	sync_msg->protocol = (u8)sis->protocol;
 	sync_msg->flow_ip = sis->src_ip.ip;
 	sync_msg->flow_ip_xlate = sis->src_ip_xlate.ip;
 	sync_msg->flow_ident = sis->src_port;
@@ -406,7 +403,7 @@ static void sfe_drv_ipv4_stats_sync_callback(struct sfe_connection_sync *sis)
 	/*
 	 * fill expiration time to extend, in unit of msec
 	 */
-	sync_msg->inc_ticks = (((uint32_t)sis->delta_jiffies) * MSEC_PER_SEC)/HZ;
+	sync_msg->inc_ticks = (((u32)sis->delta_jiffies) * MSEC_PER_SEC)/HZ;
 
 	/*
 	 * fill other information
@@ -659,7 +656,7 @@ EXPORT_SYMBOL(sfe_drv_ipv4_tx);
  * sfe_ipv4_msg_init()
  *	Initialize IPv4 message.
  */
-void sfe_ipv4_msg_init(struct sfe_ipv4_msg *nim, uint16_t if_num, uint32_t type, uint32_t len,
+void sfe_ipv4_msg_init(struct sfe_ipv4_msg *nim, u16 if_num, u32 type, u32 len,
 			sfe_ipv4_msg_callback_t cb, void *app_data)
 {
 	sfe_cmn_msg_init(&nim->cm, if_num, type, len, (void *)cb, app_data);
@@ -759,7 +756,7 @@ static void sfe_drv_ipv6_stats_sync_callback(struct sfe_connection_sync *sis)
 	/*
 	 * fill connection specific information
 	 */
-	sync_msg->protocol = (uint8_t)sis->protocol;
+	sync_msg->protocol = (u8)sis->protocol;
 	sfe_drv_ipv6_addr_copy(sis->src_ip.ip6, sync_msg->flow_ip);
 	sync_msg->flow_ident = sis->src_port;
 
@@ -795,7 +792,7 @@ static void sfe_drv_ipv6_stats_sync_callback(struct sfe_connection_sync *sis)
 	/*
 	 * fill expiration time to extend, in unit of msec
 	 */
-	sync_msg->inc_ticks = (((uint32_t)sis->delta_jiffies) * MSEC_PER_SEC)/HZ;
+	sync_msg->inc_ticks = (((u32)sis->delta_jiffies) * MSEC_PER_SEC)/HZ;
 
 	/*
 	 * fill other information
@@ -1047,7 +1044,7 @@ EXPORT_SYMBOL(sfe_drv_ipv6_tx);
  * sfe_ipv6_msg_init()
  *	Initialize IPv6 message.
  */
-void sfe_ipv6_msg_init(struct sfe_ipv6_msg *nim, uint16_t if_num, uint32_t type, uint32_t len,
+void sfe_ipv6_msg_init(struct sfe_ipv6_msg *nim, u16 if_num, u32 type, u32 len,
 			sfe_ipv6_msg_callback_t cb, void *app_data)
 {
 	sfe_cmn_msg_init(&nim->cm, if_num, type, len, (void *)cb, app_data);
@@ -1134,7 +1131,7 @@ EXPORT_SYMBOL(sfe_tun6rd_tx);
  * sfe_tun6rd_msg_init()
  *      Initialize sfe_tun6rd msg.
  */
-void sfe_tun6rd_msg_init(struct sfe_tun6rd_msg *ncm, uint16_t if_num, uint32_t type,  uint32_t len, void *cb, void *app_data)
+void sfe_tun6rd_msg_init(struct sfe_tun6rd_msg *ncm, u16 if_num, u32 type,  u32 len, void *cb, void *app_data)
 {
 	sfe_cmn_msg_init(&ncm->cm, if_num, type, len, cb, app_data);
 }
@@ -1246,7 +1243,7 @@ static int __init sfe_drv_init(void)
 	/*
 	 * Hook the receive path in the network stack.
 	 */
-	BUG_ON(athrs_fast_nat_recv != NULL);
+	BUG_ON(athrs_fast_nat_recv);
 	RCU_INIT_POINTER(athrs_fast_nat_recv, sfe_drv_recv);
 
 	return 0;

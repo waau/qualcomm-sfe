@@ -2,7 +2,7 @@
  * sfe.h
  *	Shortcut forwarding engine.
  *
- * Copyright (c) 2013-2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -14,18 +14,6 @@
  * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
  * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
-
-/*
- * Select whether we "hook" in below or above the Ethernet bridge layer.
- *
- * XXX - note that hooking below the bridge (set this value to 0) will
- * not currently work completely cleanly within Linux.  In order to make
- * this work properly we need to resync stats to Linux.  Arguably if we
- * want to do this we also need to validate that the source MAC address
- * of any packets is actually correct too.  Right now we're relying on
- * the bridge layer to do this sort of thing for us.
- */
-#define SFE_HOOK_ABOVE_BRIDGE 1
 
 /*
  * Debug output verbosity level.

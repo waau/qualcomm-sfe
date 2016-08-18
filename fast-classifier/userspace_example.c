@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013,2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -29,7 +29,8 @@ static struct nla_policy fast_classifier_genl_policy[FAST_CLASSIFIER_A_MAX + 1] 
 	[FAST_CLASSIFIER_A_TUPLE] = { .type = NLA_UNSPEC },
 };
 
-void dump_fc_tuple(struct fast_classifier_tuple *fc_msg) {
+void dump_fc_tuple(struct fast_classifier_tuple *fc_msg)
+{
 	char src_str[INET_ADDRSTRLEN];
 	char dst_str[INET_ADDRSTRLEN];
 
@@ -38,13 +39,13 @@ void dump_fc_tuple(struct fast_classifier_tuple *fc_msg) {
 			" DMAC=%02x:%02x:%02x:%02x:%02x:%02x\n",
 				fc_msg->proto,
 				inet_ntop(AF_INET,
-					&(fc_msg->src_saddr.in.s_addr),
-					src_str,
-					INET_ADDRSTRLEN),
+					  &fc_msg->src_saddr.in.s_addr,
+					  src_str,
+					  INET_ADDRSTRLEN),
 				inet_ntop(AF_INET,
-					&(fc_msg->dst_saddr.in.s_addr),
-					dst_str,
-					INET_ADDRSTRLEN),
+					  &fc_msg->dst_saddr.in.s_addr,
+					  dst_str,
+					  INET_ADDRSTRLEN),
 				fc_msg->sport, fc_msg->dport,
 				fc_msg->smac[0], fc_msg->smac[1], fc_msg->smac[2],
 				fc_msg->smac[3], fc_msg->smac[4], fc_msg->smac[5],
@@ -52,7 +53,8 @@ void dump_fc_tuple(struct fast_classifier_tuple *fc_msg) {
 				fc_msg->dmac[3], fc_msg->dmac[4], fc_msg->dmac[5]);
 }
 
-static int parse_cb(struct nl_msg *msg, void *arg) {
+static int parse_cb(struct nl_msg *msg, void *arg)
+{
 	struct nlmsghdr *nlh = nlmsg_hdr(msg);
 	struct genlmsghdr *gnlh = nlmsg_data(nlh);
 	struct nlattr *attrs[FAST_CLASSIFIER_A_MAX];
@@ -73,19 +75,20 @@ static int parse_cb(struct nl_msg *msg, void *arg) {
 	return NL_SKIP;
 }
 
-int fast_classifier_init() {
+int fast_classifier_init(void)
+{
 	int err;
 
 	sock = nl_socket_alloc();
-	if (sock == NULL) {
+	if (!sock) {
 		printf("Unable to allocation socket.\n");
 		return -1;
 	}
 	genl_connect(sock);
 
 	sock_event = nl_socket_alloc();
-	if (sock_event == NULL) {
-	        nl_close(sock);
+	if (!sock_event) {
+		nl_close(sock);
 		nl_socket_free(sock);
 		printf("Unable to allocation socket.\n");
 		return -1;
@@ -95,7 +98,7 @@ int fast_classifier_init() {
 	family = genl_ctrl_resolve(sock, FAST_CLASSIFIER_GENL_NAME);
 	if (family < 0) {
 		nl_close(sock_event);
-	        nl_close(sock);
+		nl_close(sock);
 		nl_socket_free(sock);
 		nl_socket_free(sock_event);
 		printf("Unable to resolve family\n");
@@ -103,7 +106,7 @@ int fast_classifier_init() {
 	}
 
 	grp_id = genl_ctrl_resolve_grp(sock, FAST_CLASSIFIER_GENL_NAME,
-					FAST_CLASSIFIER_GENL_MCGRP);
+				       FAST_CLASSIFIER_GENL_MCGRP);
 	if (grp_id < 0) {
 		printf("Unable to resolve mcast group\n");
 		return -1;
@@ -121,16 +124,18 @@ int fast_classifier_init() {
 	return 0;
 }
 
-void fast_classifier_close() {
+void fast_classifier_close(void)
+{
 	nl_close(sock_event);
-        nl_close(sock);
+	nl_close(sock);
 	nl_socket_free(sock_event);
-        nl_socket_free(sock);
+	nl_socket_free(sock);
 }
 
 void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
-					 unsigned long dst_saddr, unsigned short sport,
-					 unsigned short dport) {
+				  unsigned long dst_saddr, unsigned short sport,
+				  unsigned short dport)
+{
 	struct nl_msg *msg;
 	int ret;
 #ifdef DEBUG
@@ -141,9 +146,9 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 
 #ifdef DEBUG
 	printf("DEBUG: would offload: %d, %s, %s, %d, %d\n", proto,
-				inet_ntop(AF_INET, &src_saddr,  src_str, INET_ADDRSTRLEN),
-				inet_ntop(AF_INET, &dst_saddr,  dst_str, INET_ADDRSTRLEN),
-				sport, dport);
+	       inet_ntop(AF_INET, &src_saddr,  src_str, INET_ADDRSTRLEN),
+	       inet_ntop(AF_INET, &dst_saddr,  dst_str, INET_ADDRSTRLEN),
+	       sport, dport);
 #endif
 
 	fc_msg.proto = proto;
@@ -170,43 +175,45 @@ void fast_classifier_ipv4_offload(unsigned char proto, unsigned long src_saddr,
 	}
 
 	msg = nlmsg_alloc();
-	if (msg == NULL) {
+	if (!msg) {
 		nl_socket_free(sock);
 		printf("Unable to allocate message\n");
 		return;
 	}
 
-        genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, family,
-			FAST_CLASSIFIER_GENL_HDRSIZE, NLM_F_REQUEST,
-			FAST_CLASSIFIER_C_OFFLOAD, FAST_CLASSIFIER_GENL_VERSION);
-        nla_put(msg, 1, sizeof(fc_msg), &fc_msg);
+	genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, family,
+		    FAST_CLASSIFIER_GENL_HDRSIZE, NLM_F_REQUEST,
+		    FAST_CLASSIFIER_C_OFFLOAD, FAST_CLASSIFIER_GENL_VERSION);
+	nla_put(msg, 1, sizeof(fc_msg), &fc_msg);
 
-        ret = nl_send_auto_complete(sock, msg);
+	ret = nl_send_auto_complete(sock, msg);
 
-        nlmsg_free(msg);
-        if (ret < 0) {
-                printf("nlmsg_free failed");
+	nlmsg_free(msg);
+	if (ret < 0) {
+		printf("nlmsg_free failed");
 		nl_close(sock);
 		nl_socket_free(sock);
-                return;
-        }
+		return;
+	}
 
-        ret = nl_wait_for_ack(sock);
-        if (ret < 0) {
-                printf("wait for ack failed");
+	ret = nl_wait_for_ack(sock);
+	if (ret < 0) {
+		printf("wait for ack failed");
 		nl_close(sock);
 		nl_socket_free(sock);
-                return;
-        }
+		return;
+	}
 }
 
-void fast_classifier_listen_for_messages(void) {
+void fast_classifier_listen_for_messages(void)
+{
 	printf("waiting for netlink events\n");
 
 	while (1) {
 		nl_recvmsgs_default(sock_event);
 	}
 }
+
 int main(int argc, char *argv[])
 {
 	if (fast_classifier_init() < 0) {
@@ -221,5 +228,5 @@ int main(int argc, char *argv[])
 
 	fast_classifier_close();
 
-        return 0;
+	return 0;
 }

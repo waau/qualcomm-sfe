@@ -63,7 +63,7 @@ struct nl_classifier_instance {
 
 struct nl_classifier_instance nl_cls_inst;
 
-static struct nla_policy nl_classifier_genl_policy[NL_CLASSIFIER_ATTR_MAX+1] = {
+static struct nla_policy nl_classifier_genl_policy[(NL_CLASSIFIER_ATTR_MAX+1)] = {
 	[NL_CLASSIFIER_ATTR_TUPLE] = { .type = NLA_UNSPEC },
 };
 
@@ -71,9 +71,9 @@ void nl_classifier_dump_nl_tuple(struct nl_classifier_tuple *tuple)
 {
 	char ip_str[64];
 
-	printf("protocol = %s\n", (tuple->proto == IPPROTO_UDP) ? "udp" : ((tuple->proto == IPPROTO_TCP) ? "tcp" : "unknow"));
-	printf("source ip = %s\n", inet_ntop(tuple->af, &(tuple->src_ip), ip_str, sizeof(ip_str)));
-	printf("destination ip = %s\n", inet_ntop(tuple->af, &(tuple->dst_ip), ip_str, sizeof(ip_str)));
+	printf("protocol = %s\n", (tuple->proto == IPPROTO_UDP) ? "udp" : ((tuple->proto == IPPROTO_TCP) ? "tcp" : "unknown"));
+	printf("source ip = %s\n", inet_ntop(tuple->af, &tuple->src_ip, ip_str, sizeof(ip_str)));
+	printf("destination ip = %s\n", inet_ntop(tuple->af, &tuple->dst_ip, ip_str, sizeof(ip_str)));
 	printf("source port = %d\n", ntohs(tuple->sport));
 	printf("destination port = %d\n", ntohs(tuple->dport));
 }
@@ -82,7 +82,7 @@ int nl_classifier_msg_recv(struct nl_msg *msg, void *arg)
 {
 	struct nlmsghdr *nlh = nlmsg_hdr(msg);
 	struct genlmsghdr *gnlh = nlmsg_data(nlh);
-	struct nlattr *attrs[NL_CLASSIFIER_ATTR_MAX+1];
+	struct nlattr *attrs[(NL_CLASSIFIER_ATTR_MAX+1)];
 
 	genlmsg_parse(nlh, NL_CLASSIFIER_GENL_HDRSIZE, attrs, NL_CLASSIFIER_ATTR_MAX, nl_classifier_genl_policy);
 
@@ -103,9 +103,9 @@ int nl_classifier_msg_recv(struct nl_msg *msg, void *arg)
 }
 
 void nl_classifier_offload(struct nl_classifier_instance *inst,
-				unsigned char proto, unsigned long *src_saddr,
-				unsigned long *dst_saddr, unsigned short sport,
-				unsigned short dport, int af)
+			   unsigned char proto, unsigned long *src_saddr,
+			   unsigned long *dst_saddr, unsigned short sport,
+			   unsigned short dport, int af)
 {
 	struct nl_msg *msg;
 	int ret;
@@ -120,14 +120,14 @@ void nl_classifier_offload(struct nl_classifier_instance *inst,
 	classifier_msg.dport = dport;
 
 	msg = nlmsg_alloc();
-	if (msg == NULL) {
+	if (!msg) {
 		printf("Unable to allocate message\n");
 		return;
 	}
 
 	genlmsg_put(msg, NL_AUTO_PID, NL_AUTO_SEQ, inst->family_id,
-			NL_CLASSIFIER_GENL_HDRSIZE, NLM_F_REQUEST,
-			NL_CLASSIFIER_CMD_ACCEL, NL_CLASSIFIER_GENL_VERSION);
+		    NL_CLASSIFIER_GENL_HDRSIZE, NLM_F_REQUEST,
+		    NL_CLASSIFIER_CMD_ACCEL, NL_CLASSIFIER_GENL_VERSION);
 	nla_put(msg, NL_CLASSIFIER_ATTR_TUPLE, sizeof(classifier_msg), &classifier_msg);
 
 	ret = nl_send_auto(inst->sock, msg);
@@ -196,7 +196,7 @@ void nl_classifier_exit(struct nl_classifier_instance *inst)
 }
 
 int nl_classifier_parse_arg(int argc, char *argv[], unsigned char *proto, unsigned long *src_saddr,
-		unsigned long *dst_saddr, unsigned short *sport, unsigned short *dport, int *af)
+			    unsigned long *dst_saddr, unsigned short *sport, unsigned short *dport, int *af)
 {
 	int ret;
 	unsigned short port;

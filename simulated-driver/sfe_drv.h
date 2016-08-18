@@ -2,7 +2,7 @@
  * sfe_drv.h
  *	simulated driver headers for shortcut forwarding engine.
  *
- * Copyright (c) 2015 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015,2016 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -108,14 +108,14 @@ enum sfe_message_types {
  * Common message structure
  */
 struct sfe_cmn_msg {
-	uint16_t version;		/**< Version id for main message format */
-	uint16_t interface;		/**< Primary Key for all messages */
+	u16 version;		/**< Version id for main message format */
+	u16 interface;		/**< Primary Key for all messages */
 	enum sfe_cmn_response response;	/**< Primary response */
-	uint32_t type;			/**< Decetralized request #, to be used to match response # */
-	uint32_t error;			/**< Decentralized specific error message, response == EMSG */
-	uint32_t cb;			/**< Place for callback pointer */
-	uint32_t app_data;		/**< Place for app data */
-	uint32_t len;			/**< What is the length of the message excluding this header */
+	u32 type;			/**< Decetralized request #, to be used to match response # */
+	u32 error;			/**< Decentralized specific error message, response == EMSG */
+	u32 cb;			/**< Place for callback pointer */
+	u32 app_data;		/**< Place for app data */
+	u32 len;			/**< What is the length of the message excluding this header */
 };
 
 /**
@@ -126,8 +126,8 @@ struct sfe_ipv4_5tuple {
 	__be32 return_ip;		/**< Return IP address */
 	__be16 flow_ident;		/**< Flow ident (e.g. TCP/UDP port) */
 	__be16 return_ident;		/**< Return ident (e.g. TCP/UDP port) */
-	uint8_t protocol;		/**< Protocol number */
-	uint8_t reserved[3];		/**< Padded for alignment */
+	u8 protocol;		/**< Protocol number */
+	u8 reserved[3];		/**< Padded for alignment */
 };
 
 /**
@@ -138,22 +138,22 @@ struct sfe_ipv6_5tuple {
 	__be32 return_ip[4];		/**< Return IP address */
 	__be16 flow_ident;		/**< Flow ident (e.g. TCP/UDP port) */
 	__be16 return_ident;		/**< Return ident (e.g. TCP/UDP port) */
-	uint8_t  protocol;		/**< Protocol number */
-	uint8_t  reserved[3];		/**< Padded for alignment */
+	u8  protocol;		/**< Protocol number */
+	u8  reserved[3];		/**< Padded for alignment */
 };
 
 /**
  * Connection create structure
  */
 struct sfe_ipv4_connection_rule {
-	uint8_t flow_mac[6];		/**< Flow MAC address */
-	uint8_t return_mac[6];		/**< Return MAC address */
-	int32_t flow_interface_num;	/**< Flow interface number */
-	int32_t return_interface_num;	/**< Return interface number */
-	int32_t flow_top_interface_num;	/* Top flow interface number */
-	int32_t return_top_interface_num;/* Top return interface number */
-	uint32_t flow_mtu;		/**< Flow interface`s MTU */
-	uint32_t return_mtu;		/**< Return interface`s MTU */
+	u8 flow_mac[6];		/**< Flow MAC address */
+	u8 return_mac[6];		/**< Return MAC address */
+	s32 flow_interface_num;	/**< Flow interface number */
+	s32 return_interface_num;	/**< Return interface number */
+	s32 flow_top_interface_num;	/* Top flow interface number */
+	s32 return_top_interface_num;/* Top return interface number */
+	u32 flow_mtu;		/**< Flow interface`s MTU */
+	u32 return_mtu;		/**< Return interface`s MTU */
 	__be32 flow_ip_xlate;		/**< Translated flow IP address */
 	__be32 return_ip_xlate;		/**< Translated return IP address */
 	__be16 flow_ident_xlate;	/**< Translated flow ident (e.g. port) */
@@ -164,64 +164,64 @@ struct sfe_ipv4_connection_rule {
  * Connection create structure
  */
 struct sfe_ipv6_connection_rule {
-	uint8_t flow_mac[6];		/**< Flow MAC address */
-	uint8_t return_mac[6];		/**< Return MAC address */
-	int32_t flow_interface_num;	/**< Flow interface number */
-	int32_t return_interface_num;	/**< Return interface number */
-	int32_t flow_top_interface_num;	/* Top flow interface number */
-	int32_t return_top_interface_num;/* Top return interface number */
-	uint32_t flow_mtu;		/**< Flow interface's MTU */
-	uint32_t return_mtu;		/**< Return interface's MTU */
+	u8 flow_mac[6];		/**< Flow MAC address */
+	u8 return_mac[6];		/**< Return MAC address */
+	s32 flow_interface_num;	/**< Flow interface number */
+	s32 return_interface_num;	/**< Return interface number */
+	s32 flow_top_interface_num;	/* Top flow interface number */
+	s32 return_top_interface_num;/* Top return interface number */
+	u32 flow_mtu;		/**< Flow interface's MTU */
+	u32 return_mtu;		/**< Return interface's MTU */
 };
 
 /**
  * TCP connection rule structure
  */
 struct sfe_protocol_tcp_rule {
-	uint32_t flow_max_window;	/**< Flow direction's largest seen window */
-	uint32_t return_max_window;	/**< Return direction's largest seen window */
-	uint32_t flow_end;		/**< Flow direction's largest seen sequence + segment length */
-	uint32_t return_end;		/**< Return direction's largest seen sequence + segment length */
-	uint32_t flow_max_end;		/**< Flow direction's largest seen ack + max(1, win) */
-	uint32_t return_max_end;	/**< Return direction's largest seen ack + max(1, win) */
-	uint8_t flow_window_scale;	/**< Flow direction's window scaling factor */
-	uint8_t return_window_scale;	/**< Return direction's window scaling factor */
-	uint16_t reserved;		/**< Padded for alignment */
+	u32 flow_max_window;	/**< Flow direction's largest seen window */
+	u32 return_max_window;	/**< Return direction's largest seen window */
+	u32 flow_end;		/**< Flow direction's largest seen sequence + segment length */
+	u32 return_end;		/**< Return direction's largest seen sequence + segment length */
+	u32 flow_max_end;		/**< Flow direction's largest seen ack + max(1, win) */
+	u32 return_max_end;	/**< Return direction's largest seen ack + max(1, win) */
+	u8 flow_window_scale;	/**< Flow direction's window scaling factor */
+	u8 return_window_scale;	/**< Return direction's window scaling factor */
+	u16 reserved;		/**< Padded for alignment */
 };
 
 /**
  * PPPoE connection rules structure
  */
 struct sfe_pppoe_rule {
-	uint16_t flow_pppoe_session_id;		/**< Flow direction`s PPPoE session ID. */
-	uint16_t flow_pppoe_remote_mac[3];	/**< Flow direction`s PPPoE Server MAC address */
-	uint16_t return_pppoe_session_id;	/**< Return direction's PPPoE session ID. */
-	uint16_t return_pppoe_remote_mac[3];	/**< Return direction's PPPoE Server MAC address */
+	u16 flow_pppoe_session_id;		/**< Flow direction`s PPPoE session ID. */
+	u16 flow_pppoe_remote_mac[3];	/**< Flow direction`s PPPoE Server MAC address */
+	u16 return_pppoe_session_id;	/**< Return direction's PPPoE session ID. */
+	u16 return_pppoe_remote_mac[3];	/**< Return direction's PPPoE Server MAC address */
 };
 
 /**
  * QoS connection rule structure
  */
 struct sfe_qos_rule {
-	uint32_t flow_qos_tag;		/**< QoS tag associated with this rule for flow direction */
-	uint32_t return_qos_tag;	/**< QoS tag associated with this rule for return direction */
+	u32 flow_qos_tag;		/**< QoS tag associated with this rule for flow direction */
+	u32 return_qos_tag;	/**< QoS tag associated with this rule for return direction */
 };
 
 /**
  * DSCP connection rule structure
  */
 struct sfe_dscp_rule {
-	uint8_t flow_dscp;		/**< Egress DSCP value for flow direction */
-	uint8_t return_dscp;		/**< Egress DSCP value for return direction */
-	uint8_t reserved[2];		/**< Padded for alignment */
+	u8 flow_dscp;		/**< Egress DSCP value for flow direction */
+	u8 return_dscp;		/**< Egress DSCP value for return direction */
+	u8 reserved[2];		/**< Padded for alignment */
 };
 
 /**
  * VLAN connection rule structure
  */
 struct sfe_vlan_rule {
-	uint32_t ingress_vlan_tag;	/**< VLAN Tag for the ingress packets */
-	uint32_t egress_vlan_tag;	/**< VLAN Tag for egress packets */
+	u32 ingress_vlan_tag;	/**< VLAN Tag for the ingress packets */
+	u32 egress_vlan_tag;	/**< VLAN Tag for egress packets */
 };
 
 /**
@@ -229,9 +229,9 @@ struct sfe_vlan_rule {
  * 	Sometimes we just want to accelerate traffic in one direction but not in another.
  */
 struct sfe_acceleration_direction_rule {
-	uint8_t flow_accel;		/**< Accelerate in flow direction */
-	uint8_t return_accel;		/**< Accelerate in return direction */
-	uint8_t reserved[2];		/**< Padded for alignment */
+	u8 flow_accel;		/**< Accelerate in flow direction */
+	u8 return_accel;		/**< Accelerate in return direction */
+	u8 reserved[2];		/**< Padded for alignment */
 };
 
 /**
@@ -239,8 +239,8 @@ struct sfe_acceleration_direction_rule {
  */
 struct sfe_ipv4_rule_create_msg {
 	/* Request */
-	uint16_t valid_flags;				/**< Bit flags associated with the validity of parameters */
-	uint16_t rule_flags;				/**< Bit flags associated with the rule */
+	u16 valid_flags;				/**< Bit flags associated with the validity of parameters */
+	u16 rule_flags;				/**< Bit flags associated with the rule */
 
 	struct sfe_ipv4_5tuple tuple;			/**< Holds values of the 5 tuple */
 
@@ -255,7 +255,7 @@ struct sfe_ipv4_rule_create_msg {
 	struct sfe_acceleration_direction_rule direction_rule;/* Direction related accleration parameters*/
 #endif
 	/* Response */
-	uint32_t index;					/**< Slot ID for cache stats to host OS */
+	u32 index;					/**< Slot ID for cache stats to host OS */
 };
 
 /**
@@ -269,45 +269,45 @@ struct sfe_ipv4_rule_destroy_msg {
  * The SFE IPv4 rule sync structure.
  */
 struct sfe_ipv4_conn_sync {
-	uint32_t index;			/**< Slot ID for cache stats to host OS */
-	uint8_t protocol;		/**< Protocol number */
+	u32 index;			/**< Slot ID for cache stats to host OS */
+	u8 protocol;		/**< Protocol number */
 	__be32 flow_ip;			/**< Flow IP address */
 	__be32 flow_ip_xlate;		/**< Translated flow IP address */
 	__be16 flow_ident;		/**< Flow ident (e.g. port) */
 	__be16 flow_ident_xlate;	/**< Translated flow ident (e.g. port) */
-	uint32_t flow_max_window;	/**< Flow direction's largest seen window */
-	uint32_t flow_end;		/**< Flow direction's largest seen sequence + segment length */
-	uint32_t flow_max_end;		/**< Flow direction's largest seen ack + max(1, win) */
-	uint32_t flow_rx_packet_count;	/**< Flow interface's RX packet count */
-	uint32_t flow_rx_byte_count;	/**< Flow interface's RX byte count */
-	uint32_t flow_tx_packet_count;	/**< Flow interface's TX packet count */
-	uint32_t flow_tx_byte_count;	/**< Flow interface's TX byte count */
-	uint16_t flow_pppoe_session_id; /**< Flow interface`s PPPoE session ID. */
-	uint16_t flow_pppoe_remote_mac[3];
+	u32 flow_max_window;	/**< Flow direction's largest seen window */
+	u32 flow_end;		/**< Flow direction's largest seen sequence + segment length */
+	u32 flow_max_end;		/**< Flow direction's largest seen ack + max(1, win) */
+	u32 flow_rx_packet_count;	/**< Flow interface's RX packet count */
+	u32 flow_rx_byte_count;	/**< Flow interface's RX byte count */
+	u32 flow_tx_packet_count;	/**< Flow interface's TX packet count */
+	u32 flow_tx_byte_count;	/**< Flow interface's TX byte count */
+	u16 flow_pppoe_session_id; /**< Flow interface`s PPPoE session ID. */
+	u16 flow_pppoe_remote_mac[3];
 					/**< Flow interface's PPPoE remote server MAC address if there is any */
 	__be32 return_ip;		/**< Return IP address */
 	__be32 return_ip_xlate;		/**< Translated return IP address */
 	__be16 return_ident;		/**< Return ident (e.g. port) */
 	__be16 return_ident_xlate;	/**< Translated return ident (e.g. port) */
-	uint32_t return_max_window;	/**< Return direction's largest seen window */
-	uint32_t return_end;		/**< Return direction's largest seen sequence + segment length */
-	uint32_t return_max_end;	/**< Return direction's largest seen ack + max(1, win) */
-	uint32_t return_rx_packet_count;
+	u32 return_max_window;	/**< Return direction's largest seen window */
+	u32 return_end;		/**< Return direction's largest seen sequence + segment length */
+	u32 return_max_end;	/**< Return direction's largest seen ack + max(1, win) */
+	u32 return_rx_packet_count;
 					/**< Return interface's RX packet count */
-	uint32_t return_rx_byte_count;	/**< Return interface's RX byte count */
-	uint32_t return_tx_packet_count;
+	u32 return_rx_byte_count;	/**< Return interface's RX byte count */
+	u32 return_tx_packet_count;
 					/**< Return interface's TX packet count */
-	uint32_t return_tx_byte_count;	/**< Return interface's TX byte count */
-	uint16_t return_pppoe_session_id;
+	u32 return_tx_byte_count;	/**< Return interface's TX byte count */
+	u16 return_pppoe_session_id;
 					/**< Return interface`s PPPoE session ID. */
-	uint16_t return_pppoe_remote_mac[3];
+	u16 return_pppoe_remote_mac[3];
 					/**< Return interface's PPPoE remote server MAC address if there is any */
-	uint32_t inc_ticks;		/**< Number of ticks since the last sync */
-	uint32_t reason;		/**< Reason for the sync */
+	u32 inc_ticks;		/**< Number of ticks since the last sync */
+	u32 reason;		/**< Reason for the sync */
 
-	uint8_t flags;			/**< Bit flags associated with the rule */
-	uint32_t qos_tag;		/**< QoS Tag */
-	uint32_t cause;			/**< Flush Cause */
+	u8 flags;			/**< Bit flags associated with the rule */
+	u32 qos_tag;		/**< QoS Tag */
+	u32 cause;			/**< Flush Cause */
 };
 
 /*
@@ -334,8 +334,8 @@ struct sfe_ipv6_rule_create_msg {
 	/*
 	 * Request
 	 */
-	uint16_t valid_flags;				/**< Bit flags associated with the validity of parameters */
-	uint16_t rule_flags;				/**< Bit flags associated with the rule */
+	u16 valid_flags;				/**< Bit flags associated with the validity of parameters */
+	u16 rule_flags;				/**< Bit flags associated with the rule */
 	struct sfe_ipv6_5tuple tuple;			/**< Holds values of the 5 tuple */
 	struct sfe_ipv6_connection_rule conn_rule;	/**< Basic connection specific data */
 	struct sfe_protocol_tcp_rule tcp_rule;		/**< Protocol related accleration parameters */
@@ -350,7 +350,7 @@ struct sfe_ipv6_rule_create_msg {
 	/*
 	 * Response
 	 */
-	uint32_t index;					/**< Slot ID for cache stats to host OS */
+	u32 index;					/**< Slot ID for cache stats to host OS */
 };
 
 /**
@@ -364,40 +364,40 @@ struct sfe_ipv6_rule_destroy_msg {
  * The SFE IPv6 rule sync structure.
  */
 struct sfe_ipv6_conn_sync {
-	uint32_t index;			/**< Slot ID for cache stats to host OS */
-	uint8_t protocol;		/**< Protocol number */
+	u32 index;			/**< Slot ID for cache stats to host OS */
+	u8 protocol;		/**< Protocol number */
 	__be32 flow_ip[4];		/**< Flow IP address */
 	__be16 flow_ident;		/**< Flow ident (e.g. port) */
-	uint32_t flow_max_window;	/**< Flow direction's largest seen window */
-	uint32_t flow_end;		/**< Flow direction's largest seen sequence + segment length */
-	uint32_t flow_max_end;		/**< Flow direction's largest seen ack + max(1, win) */
-	uint32_t flow_rx_packet_count;	/**< Flow interface's RX packet count */
-	uint32_t flow_rx_byte_count;	/**< Flow interface's RX byte count */
-	uint32_t flow_tx_packet_count;	/**< Flow interface's TX packet count */
-	uint32_t flow_tx_byte_count;	/**< Flow interface's TX byte count */
-	uint16_t flow_pppoe_session_id; /**< Flow interface`s PPPoE session ID. */
-	uint16_t flow_pppoe_remote_mac[3];
+	u32 flow_max_window;	/**< Flow direction's largest seen window */
+	u32 flow_end;		/**< Flow direction's largest seen sequence + segment length */
+	u32 flow_max_end;		/**< Flow direction's largest seen ack + max(1, win) */
+	u32 flow_rx_packet_count;	/**< Flow interface's RX packet count */
+	u32 flow_rx_byte_count;	/**< Flow interface's RX byte count */
+	u32 flow_tx_packet_count;	/**< Flow interface's TX packet count */
+	u32 flow_tx_byte_count;	/**< Flow interface's TX byte count */
+	u16 flow_pppoe_session_id; /**< Flow interface`s PPPoE session ID. */
+	u16 flow_pppoe_remote_mac[3];
 					/**< Flow interface's PPPoE remote server MAC address if there is any */
 	__be32 return_ip[4];		/**< Return IP address */
 	__be16 return_ident;		/**< Return ident (e.g. port) */
-	uint32_t return_max_window;	/**< Return direction's largest seen window */
-	uint32_t return_end;		/**< Return direction's largest seen sequence + segment length */
-	uint32_t return_max_end;	/**< Return direction's largest seen ack + max(1, win) */
-	uint32_t return_rx_packet_count;
+	u32 return_max_window;	/**< Return direction's largest seen window */
+	u32 return_end;		/**< Return direction's largest seen sequence + segment length */
+	u32 return_max_end;	/**< Return direction's largest seen ack + max(1, win) */
+	u32 return_rx_packet_count;
 					/**< Return interface's RX packet count */
-	uint32_t return_rx_byte_count;	/**< Return interface's RX byte count */
-	uint32_t return_tx_packet_count;
+	u32 return_rx_byte_count;	/**< Return interface's RX byte count */
+	u32 return_tx_packet_count;
 					/**< Return interface's TX packet count */
-	uint32_t return_tx_byte_count;	/**< Return interface's TX byte count */
-	uint16_t return_pppoe_session_id;
+	u32 return_tx_byte_count;	/**< Return interface's TX byte count */
+	u16 return_pppoe_session_id;
 					/**< Return interface`s PPPoE session ID. */
-	uint16_t return_pppoe_remote_mac[3];
+	u16 return_pppoe_remote_mac[3];
 					/**< Return interface's PPPoE remote server MAC address if there is any */
-	uint32_t inc_ticks;		/**< Number of ticks since the last sync */
-	uint32_t reason;		/**< Reason for the sync */
-	uint8_t flags;			/**< Bit flags associated with the rule */
-	uint32_t qos_tag;		/**< QoS Tag */
-	uint32_t cause;			/**< Flush cause associated with the rule */
+	u32 inc_ticks;		/**< Number of ticks since the last sync */
+	u32 reason;		/**< Reason for the sync */
+	u8 flags;			/**< Bit flags associated with the rule */
+	u32 qos_tag;		/**< QoS Tag */
+	u32 cause;			/**< Flush cause associated with the rule */
 };
 
 /**
@@ -482,7 +482,7 @@ extern void sfe_drv_ipv4_notify_unregister(void);
  * sfe_ipv4_msg_init()
  * 	IPv4 message init
  */
-extern void sfe_ipv4_msg_init(struct sfe_ipv4_msg *nim, uint16_t if_num, uint32_t type, uint32_t len,
+extern void sfe_ipv4_msg_init(struct sfe_ipv4_msg *nim, u16 if_num, u32 type, u32 len,
 			sfe_ipv4_msg_callback_t cb, void *app_data);
 
 /*
@@ -525,7 +525,7 @@ extern void sfe_drv_ipv6_notify_unregister(void);
  * sfe_ipv6_msg_init()
  * 	IPv6 message init
  */
-extern void sfe_ipv6_msg_init(struct sfe_ipv6_msg *nim, uint16_t if_num, uint32_t type, uint32_t len,
+extern void sfe_ipv6_msg_init(struct sfe_ipv6_msg *nim, u16 if_num, u32 type, u32 len,
 			sfe_ipv6_msg_callback_t cb, void *app_data);
 
 /*
@@ -538,7 +538,7 @@ sfe_tx_status_t sfe_tun6rd_tx(struct sfe_drv_ctx_instance *sfe_ctx, struct sfe_t
  * sfe_tun6rd_msg_init()
  *      Initialize sfe_tun6rd msg.
  */
-void sfe_tun6rd_msg_init(struct sfe_tun6rd_msg *ncm, uint16_t if_num, uint32_t type,  uint32_t len,
+void sfe_tun6rd_msg_init(struct sfe_tun6rd_msg *ncm, u16 if_num, u32 type,  u32 len,
 			 void *cb, void *app_data);
 
 #endif /* __SFE_DRV_H */

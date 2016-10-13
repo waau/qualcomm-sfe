@@ -167,3 +167,18 @@ static inline int sfe_propagate_dev_event(sfe_dev_event_cb_t fn, struct notifier
 #define sfe_hash_for_each(name, bkt, node, obj, member) \
 	hash_for_each(name, bkt, node, obj, member)
 #endif
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0))
+#define sfe_dst_get_neighbour(dst, daddr) dst_neigh_lookup(dst, addr)
+#else
+static inline struct neighbour *
+sfe_dst_get_neighbour(struct dst_entry *dst, void *daddr)
+{
+	struct neighbour *neigh = dst_get_neighbour_noref(dst);
+
+	if (neigh)
+		neigh_hold(neigh);
+
+	return neigh;
+}
+#endif

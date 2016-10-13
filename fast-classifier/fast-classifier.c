@@ -325,7 +325,7 @@ static bool fast_classifier_find_dev_and_mac_addr(sfe_ip_addr_t *addr, struct ne
 	}
 
 	rcu_read_lock();
-	neigh = dst_neigh_lookup(dst, addr);
+	neigh = sfe_dst_get_neighbour(dst, addr);
 	if (unlikely(!neigh)) {
 		rcu_read_unlock();
 		dst_release(dst);

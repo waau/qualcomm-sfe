@@ -59,6 +59,9 @@ static char *sfe_drv_exception_events_string[SFE_DRV_EXCEPTION_MAX] = {
 #define SFE_MESSAGE_VERSION 0x1
 #define SFE_MAX_CONNECTION_NUM 65535
 #define sfe_drv_ipv6_addr_copy(src, dest) memcpy((void *)(dest), (void *)(src), 16)
+#define sfe_drv_ipv4_stopped(ctx) ((ctx)->ipv4_stats_sync_cb == NULL)
+#define sfe_drv_ipv6_stopped(ctx) ((ctx)->ipv6_stats_sync_cb == NULL)
+
 /*
  * message type of queued response message
  */
@@ -232,13 +235,13 @@ static void sfe_drv_process_response_msg(struct work_struct *work)
 		/*
 		 * send response message back to caller
 		 */
-		if (response->type == SFE_DRV_MSG_TYPE_IPV4) {
+		if ((response->type == SFE_DRV_MSG_TYPE_IPV4) && !sfe_drv_ipv4_stopped(sfe_drv_ctx)) {
 			struct sfe_ipv4_msg *msg = (struct sfe_ipv4_msg *)response->msg;
 			sfe_ipv4_msg_callback_t callback = (sfe_ipv4_msg_callback_t)msg->cm.cb;
 			if (callback) {
 				callback((void *)msg->cm.app_data, msg);
 			}
-		} else if (response->type == SFE_DRV_MSG_TYPE_IPV6) {
+		} else if ((response->type == SFE_DRV_MSG_TYPE_IPV6) && !sfe_drv_ipv6_stopped(sfe_drv_ctx)) {
 			struct sfe_ipv6_msg *msg = (struct sfe_ipv6_msg *)response->msg;
 			sfe_ipv6_msg_callback_t callback = (sfe_ipv6_msg_callback_t)msg->cm.cb;
 			if (callback) {

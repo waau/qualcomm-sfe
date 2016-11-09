@@ -60,8 +60,8 @@ static char *sfe_drv_exception_events_string[SFE_DRV_EXCEPTION_MAX] = {
 #define SFE_MESSAGE_VERSION 0x1
 #define SFE_MAX_CONNECTION_NUM 65535
 #define sfe_drv_ipv6_addr_copy(src, dest) memcpy((void *)(dest), (void *)(src), 16)
-#define sfe_drv_ipv4_stopped(ctx) ((ctx)->ipv4_stats_sync_cb == NULL)
-#define sfe_drv_ipv6_stopped(ctx) ((ctx)->ipv6_stats_sync_cb == NULL)
+#define sfe_drv_ipv4_stopped(CTX) (rcu_dereference((CTX)->ipv4_stats_sync_cb) == NULL)
+#define sfe_drv_ipv6_stopped(CTX) (rcu_dereference((CTX)->ipv6_stats_sync_cb) == NULL)
 
 /*
  * message type of queued response message
@@ -232,6 +232,7 @@ static void sfe_drv_process_response_msg(struct work_struct *work)
 	while ((response = list_first_entry_or_null(&sfe_drv_ctx->msg_queue, struct sfe_drv_response_msg, node))) {
 		list_del(&response->node);
 		spin_unlock_bh(&sfe_drv_ctx->lock);
+		rcu_read_lock();
 
 		/*
 		 * send response message back to caller
@@ -250,6 +251,7 @@ static void sfe_drv_process_response_msg(struct work_struct *work)
 			}
 		}
 
+		rcu_read_unlock();
 		/*
 		 * free response message
 		 */

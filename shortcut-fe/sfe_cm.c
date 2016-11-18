@@ -29,7 +29,6 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
-#include <net/netfilter/nf_conntrack_timeout.h>
 #include <linux/netfilter/xt_dscp.h>
 #include <linux/if_bridge.h>
 
@@ -858,6 +857,7 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 		}
 		spin_unlock_bh(&ct->lock);
 		break;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0))
 	case IPPROTO_UDP:
 		/*
 		 * In Linux connection track, UDP flow has two timeout values:
@@ -889,6 +889,7 @@ static void sfe_cm_sync_rule(struct sfe_connection_sync *sis)
 			}
 		}
 		break;
+#endif /*KERNEL_VERSION(3, 4, 0)*/
 	}
 
 	/*

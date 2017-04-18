@@ -2,7 +2,7 @@
  * sfe.h
  *	Shortcut forwarding engine.
  *
- * Copyright (c) 2013-2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013-2017 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -15,49 +15,58 @@
  * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+
 /*
- * Debug output verbosity level.
+ * The following are debug macros used throughout the SFE.
+ *
+ * The DEBUG_LEVEL enables the followings based on its value,
+ * when dynamic debug option is disabled.
+ *
+ * 0 = OFF
+ * 1 = ASSERTS / ERRORS
+ * 2 = 1 + WARN
+ * 3 = 2 + INFO
+ * 4 = 3 + TRACE
  */
 #define DEBUG_LEVEL 2
 
 #if (DEBUG_LEVEL < 1)
+#define DEBUG_ASSERT(s, ...)
 #define DEBUG_ERROR(s, ...)
 #else
-#define DEBUG_ERROR(s, ...) \
-do { \
-	printk("%s[%u]: ERROR:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__); \
-} while (0)
+#define DEBUG_ASSERT(c, s, ...) if (!(c)) { pr_emerg("ASSERT: %s:%d:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__); BUG(); }
+#define DEBUG_ERROR(s, ...) pr_err("%s:%d:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #endif
 
+#if defined(CONFIG_DYNAMIC_DEBUG)
+/*
+ * Compile messages for dynamic enable/disable
+ */
+#define DEBUG_WARN(s, ...) pr_debug("%s[%d]:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define DEBUG_INFO(s, ...) pr_debug("%s[%d]:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#define DEBUG_TRACE(s, ...) pr_debug("%s[%d]:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#else
+
+/*
+ * Statically compile messages at different levels
+ */
 #if (DEBUG_LEVEL < 2)
 #define DEBUG_WARN(s, ...)
 #else
-#define DEBUG_WARN(s, ...) \
-do { \
-	printk("%s[%u]: WARN:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__); \
-} while (0)
+#define DEBUG_WARN(s, ...) pr_warn("%s[%d]:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #endif
 
 #if (DEBUG_LEVEL < 3)
 #define DEBUG_INFO(s, ...)
 #else
-#define DEBUG_INFO(s, ...) \
-do { \
-	printk("%s[%u]: INFO:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__); \
-} while (0)
+#define DEBUG_INFO(s, ...) pr_notice("%s[%d]:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
 #endif
 
 #if (DEBUG_LEVEL < 4)
 #define DEBUG_TRACE(s, ...)
 #else
-#define DEBUG_TRACE(s, ...) \
-do { \
-	printk("%s[%u]: TRACE:", __FILE__, __LINE__); \
-	printk(s, ##__VA_ARGS__); \
-} while (0)
+#define DEBUG_TRACE(s, ...) pr_info("%s[%d]:" s, __FUNCTION__, __LINE__, ##__VA_ARGS__)
+#endif
 #endif
 
 #ifdef CONFIG_NF_FLOW_COOKIE

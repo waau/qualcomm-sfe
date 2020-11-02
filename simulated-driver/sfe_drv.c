@@ -1162,6 +1162,10 @@ int sfe_drv_recv(struct sk_buff *skb)
 
 	dev = skb->dev;
 
+/*
+ * TODO: Remove the check when INgress Qdisc is ported to 5.4 kernel.
+ */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 #ifdef CONFIG_NET_CLS_ACT
 	/*
 	 * If ingress Qdisc configured, and packet not processed by ingress Qdisc yet
@@ -1170,6 +1174,7 @@ int sfe_drv_recv(struct sk_buff *skb)
 	if (dev->ingress_queue && !(skb->tc_verd & TC_NCLS)) {
 		return 0;
 	}
+#endif
 #endif
 
 	/*

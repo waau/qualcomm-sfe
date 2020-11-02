@@ -2318,7 +2318,7 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 		si->packets_not_forwarded++;
 		spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("payload_len: %u, exceeds len: %lu\n", payload_len, (len - sizeof(struct sfe_ipv6_ip_hdr)));
+		DEBUG_TRACE("payload_len: %u, exceeds len: %u\n", payload_len, (len - (unsigned int)sizeof(struct sfe_ipv6_ip_hdr)));
 		return 0;
 	}
 

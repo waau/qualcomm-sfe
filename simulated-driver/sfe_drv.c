@@ -335,8 +335,8 @@ static void sfe_cmn_msg_init(struct sfe_cmn_msg *ncm, u16 if_num, u32 type,  u32
 	ncm->version = SFE_MESSAGE_VERSION;
 	ncm->type = type;
 	ncm->len = len;
-	ncm->cb = (u32)cb;
-	ncm->app_data = (u32)app_data;
+	ncm->cb = (sfe_ptr_t)cb;
+	ncm->app_data = (sfe_ptr_t)app_data;
 }
 
 /*

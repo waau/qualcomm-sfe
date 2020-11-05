@@ -56,6 +56,15 @@
 #define SFE_RULE_CREATE_MC_NAT_VALID       (1<<7) /**< Interface is configured with Source-NAT */
 #define SFE_RULE_CREATE_DIRECTION_VALID    (1<<8) /**< specify acceleration directions */
 
+/*
+ * 32/64 bits pointer type
+ */
+#ifdef __LP64__
+typedef uint64_t sfe_ptr_t;
+#else
+typedef uint32_t sfe_ptr_t;
+#endif
+
 typedef enum sfe_rule_sync_reason {
 	SFE_RULE_SYNC_REASON_STATS,	/* Sync is to synchronize stats */
 	SFE_RULE_SYNC_REASON_FLUSH,	/* Sync is to flush a entry */
@@ -113,8 +122,8 @@ struct sfe_cmn_msg {
 	enum sfe_cmn_response response;	/**< Primary response */
 	u32 type;			/**< Decetralized request #, to be used to match response # */
 	u32 error;			/**< Decentralized specific error message, response == EMSG */
-	u32 cb;			/**< Place for callback pointer */
-	u32 app_data;		/**< Place for app data */
+	sfe_ptr_t cb;			/**< Place for callback pointer */
+	sfe_ptr_t app_data;		/**< Place for app data */
 	u32 len;			/**< What is the length of the message excluding this header */
 };
 

@@ -381,23 +381,6 @@ static inline void sfe_ipv4_remove_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 
 	hlist_del_init_rcu(&cm->hnode);
 
-	/*
-	 * If the connection match entry is in the active list remove it.
-	 */
-	if (cm->active) {
-		if (likely(cm->active_prev)) {
-			cm->active_prev->active_next = cm->active_next;
-		} else {
-			si->active_head = cm->active_next;
-		}
-
-		if (likely(cm->active_next)) {
-			cm->active_next->active_prev = cm->active_prev;
-		} else {
-			si->active_tail = cm->active_prev;
-		}
-	}
-
 }
 
 /*
@@ -573,6 +556,13 @@ static bool sfe_ipv4_remove_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_
 		c->all_connections_next->all_connections_prev = c->all_connections_prev;
 	} else {
 		si->all_connections_tail = c->all_connections_prev;
+	}
+
+	/*
+	 * If I am the next sync connection, move the sync to my next or head.
+	 */
+	if (unlikely(si->wc_next == c)) {
+		si->wc_next = c->all_connections_next;
 	}
 
 	c->removed = true;
@@ -958,25 +948,6 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	atomic_inc(&cm->rx_packet_count);
 	atomic_add(len, &cm->rx_byte_count);
-
-	/*
-	 * If we're not already on the active list then insert ourselves at the tail
-	 * of the current list.
-	 */
-	if (unlikely(!cm->active)) {
-		spin_lock_bh(&si->lock);
-		if (unlikely(!cm->active)) {
-			cm->active = true;
-			cm->active_prev = si->active_tail;
-			if (likely(si->active_tail)) {
-				si->active_tail->active_next = cm;
-			} else {
-				si->active_head = cm;
-			}
-			si->active_tail = cm;
-		}
-		spin_unlock_bh(&si->lock);
-	}
 
 	xmit_dev = cm->xmit_dev;
 	skb->dev = xmit_dev;
@@ -1563,26 +1534,6 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	 */
 	atomic_inc(&cm->rx_packet_count);
 	atomic_add(len, &cm->rx_byte_count);
-
-	/*
-	 * If we're not already on the active list then insert ourselves at the tail
-	 * of the current list.
-	 */
-	if (unlikely(!cm->active)) {
-		spin_lock_bh(&si->lock);
-		if (unlikely(!cm->active)) {
-
-			cm->active = true;
-			cm->active_prev = si->active_tail;
-			if (likely(si->active_tail)) {
-				si->active_tail->active_next = cm;
-			} else {
-				si->active_head = cm;
-			}
-			si->active_tail = cm;
-		}
-		spin_unlock_bh(&si->lock);
-	}
 
 	xmit_dev = cm->xmit_dev;
 	skb->dev = xmit_dev;
@@ -2172,9 +2123,6 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	}
 
 #endif
-	original_cm->active_next = NULL;
-	original_cm->active_prev = NULL;
-	original_cm->active = false;
 
 	/*
 	 * For PPP links we don't write an L2 header.  For everything else we do.
@@ -2239,9 +2187,6 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	}
 
 #endif
-	reply_cm->active_next = NULL;
-	reply_cm->active_prev = NULL;
-	reply_cm->active = false;
 
 	/*
 	 * For PPP links we don't write an L2 header.  For everything else we do.
@@ -2473,6 +2418,7 @@ static void sfe_ipv4_periodic_sync(struct timer_list *tl)
 	u64 now_jiffies;
 	int quota;
 	sfe_sync_rule_callback_t sync_rule_callback;
+	struct sfe_ipv4_connection *c;
 
 	now_jiffies = get_jiffies_64();
 
@@ -2486,66 +2432,44 @@ static void sfe_ipv4_periodic_sync(struct timer_list *tl)
 	spin_lock_bh(&si->lock);
 
 	/*
+	 * If we have reached the end of the connection list, walk from
+	 * the connection head.
+	 */
+	c = si->wc_next;
+	if (unlikely(!c)) {
+		c = si->all_connections_head;
+	}
+
+	/*
 	 * Get an estimate of the number of connections to parse in this sync.
 	 */
 	quota = (si->num_connections + 63) / 64;
 
 	/*
-	 * Walk the "active" list and sync the connection state.
+	 * Walk the "all connection" list and sync the connection state.
 	 */
-	while (quota--) {
+	while (likely(c && quota)) {
 		struct sfe_ipv4_connection_match *cm;
 		struct sfe_ipv4_connection_match *counter_cm;
-		struct sfe_ipv4_connection *c;
 		struct sfe_connection_sync sis;
 
-		cm = si->active_head;
-		if (!cm) {
-			break;
-		}
+		cm = c->original_match;
+		counter_cm = c->reply_match;
 
 		/*
-		 * There's a possibility that our counter match is in the active list too.
-		 * If it is then remove it.
+		 * Didn't receive packets in the original direction or reply
+		 * direction, move to the next connection.
 		 */
-		counter_cm = cm->counter_match;
-		if (counter_cm->active) {
-			counter_cm->active = false;
-
-			/*
-			 * We must have a connection preceding this counter match
-			 * because that's the one that got us to this point, so we don't have
-			 * to worry about removing the head of the list.
-			 */
-			counter_cm->active_prev->active_next = counter_cm->active_next;
-
-			if (likely(counter_cm->active_next)) {
-				counter_cm->active_next->active_prev = counter_cm->active_prev;
-			} else {
-				si->active_tail = counter_cm->active_prev;
-			}
-
-			counter_cm->active_next = NULL;
-			counter_cm->active_prev = NULL;
+		if ((!atomic_read(&cm->rx_packet_count)) && !(atomic_read(&counter_cm->rx_packet_count))) {
+			c = c->all_connections_next;
+			continue;
 		}
 
-		/*
-		 * Now remove the head of the active scan list.
-		 */
-		cm->active = false;
-		si->active_head = cm->active_next;
-		if (likely(cm->active_next)) {
-			cm->active_next->active_prev = NULL;
-		} else {
-			si->active_tail = NULL;
-		}
-		cm->active_next = NULL;
+		quota--;
 
-		/*
-		 * Sync the connection state.
-		 */
-		c = cm->connection;
 		sfe_ipv4_gen_sync_sfe_ipv4_connection(si, c, &sis, SFE_SYNC_REASON_STATS, now_jiffies);
+
+		si->wc_next = c->all_connections_next;
 
 		/*
 		 * We don't want to be holding the lock when we sync!
@@ -2553,7 +2477,19 @@ static void sfe_ipv4_periodic_sync(struct timer_list *tl)
 		spin_unlock_bh(&si->lock);
 		sync_rule_callback(&sis);
 		spin_lock_bh(&si->lock);
+
+		/*
+		 * c must be set and used in the same lock/unlock window;
+		 * because c could be removed when we don't hold the lock,
+		 * so delay grabbing until after the callback and relock.
+		 */
+		c = si->wc_next;
 	}
+
+	/*
+	 * At the end of the sync, put the wc_next to the connection we left.
+	 */
+	si->wc_next = c;
 
 	spin_unlock_bh(&si->lock);
 	rcu_read_unlock();

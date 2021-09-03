@@ -66,10 +66,6 @@ struct sfe_ipv4_connection_match {
 	struct sfe_ipv4_connection *connection;
 	struct sfe_ipv4_connection_match *counter_match;
 					/* Matches the flow in the opposite direction as the one in *connection */
-	struct sfe_ipv4_connection_match *active_next;
-	struct sfe_ipv4_connection_match *active_prev;
-	bool active;			/* Flag to indicate if we're on the active list */
-
 	/*
 	 * Characteristics that identify flows that match this rule.
 	 */
@@ -260,10 +256,6 @@ struct sfe_ipv4_stats {
  */
 struct sfe_ipv4 {
 	spinlock_t lock;		/* Lock for SMP correctness */
-	struct sfe_ipv4_connection_match *active_head;
-					/* Head of the list of recently active connections */
-	struct sfe_ipv4_connection_match *active_tail;
-					/* Tail of the list of recently active connections */
 	struct sfe_ipv4_connection *all_connections_head;
 					/* Head of the list of all connections */
 	struct sfe_ipv4_connection *all_connections_tail;
@@ -289,6 +281,8 @@ struct sfe_ipv4 {
 
 	struct sfe_ipv4_stats __percpu *stats_pcpu;
 					/* Per CPU statistics. */
+
+	struct sfe_ipv4_connection *wc_next; /* Connection list walk pointer for stats sync */
 
 	/*
 	 * Control state.

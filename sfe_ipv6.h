@@ -78,10 +78,6 @@ struct sfe_ipv6_connection_match {
 	struct sfe_ipv6_connection *connection;
 	struct sfe_ipv6_connection_match *counter_match;
 					/* Matches the flow in the opposite direction as the one in connection */
-	struct sfe_ipv6_connection_match *active_next;
-	struct sfe_ipv6_connection_match *active_prev;
-	bool active;			/* Flag to indicate if we're on the active list */
-
 	/*
 	 * Characteristics that identify flows that match this rule.
 	 */
@@ -181,7 +177,6 @@ struct sfe_ipv6_connection {
 					/* Pointer to the next entry in the list of all connections */
 	struct sfe_ipv6_connection *all_connections_prev;
 					/* Pointer to the previous entry in the list of all connections */
-
 	bool removed;			/* Indicates the connection is removed */
 	struct rcu_head rcu;		/* delay rcu free */
 	u32 mark;			/* mark for outgoing packet */
@@ -270,10 +265,6 @@ struct sfe_ipv6_stats {
  */
 struct sfe_ipv6 {
 	spinlock_t lock;		/* Lock for SMP correctness */
-	struct sfe_ipv6_connection_match *active_head;
-					/* Head of the list of recently active connections */
-	struct sfe_ipv6_connection_match *active_tail;
-					/* Tail of the list of recently active connections */
 	struct sfe_ipv6_connection *all_connections_head;
 					/* Head of the list of all connections */
 	struct sfe_ipv6_connection *all_connections_tail;
@@ -296,6 +287,9 @@ struct sfe_ipv6 {
 
 	struct sfe_ipv6_stats __percpu *stats_pcpu;
 					/* Common SFE counters. */
+
+	struct sfe_ipv6_connection *wc_next;
+					/* The next walk point in the all connection list*/
 
 	/*
 	 * Control state.

@@ -61,7 +61,8 @@ struct sfe_ipv4_tcp_connection_match {
 					/* Indicates that PPPoE should be encapsulated */
 #define SFE_IPV4_CONNECTION_MATCH_FLAG_BRIDGE_FLOW (1<<10)
 					/* Bridge flow */
-
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_MARK (1<<11)
+					/* skb mark of the packet */
 /*
  * IPv4 connection matching structure.
  */
@@ -132,6 +133,7 @@ struct sfe_ipv4_connection_match {
 	 */
 	u32 priority;
 	u32 dscp;
+	u32 mark;			/* mark for outgoing packet */
 
 	/*
 	 * Packet transmit information.

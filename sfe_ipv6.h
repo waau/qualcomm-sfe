@@ -74,7 +74,8 @@ struct sfe_ipv6_tcp_connection_match {
 					/* Indicates that PPPoE should be encapsulated */
 #define SFE_IPV6_CONNECTION_MATCH_FLAG_BRIDGE_FLOW (1<<10)
 					/* Bridge flow */
-
+#define SFE_IPV6_CONNECTION_MATCH_FLAG_MARK (1<<11)
+					/* set skb mark*/
 /*
  * IPv6 connection matching structure.
  */
@@ -132,6 +133,7 @@ struct sfe_ipv6_connection_match {
 	__be16 xlate_dest_port;	/* Port/connection ident after destination translation */
 	u16 xlate_dest_csum_adjustment;
 					/* Transport layer checksum adjustment after destination translation */
+	u32 mark;			/* mark for outgoing packet */
 
 	/*
 	 * QoS information
@@ -194,7 +196,6 @@ struct sfe_ipv6_connection {
 					/* Pointer to the previous entry in the list of all connections */
 	bool removed;			/* Indicates the connection is removed */
 	struct rcu_head rcu;		/* delay rcu free */
-	u32 mark;			/* mark for outgoing packet */
 	u32 debug_read_seq;		/* sequence number for debug dump */
 };
 

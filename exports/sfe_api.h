@@ -58,6 +58,7 @@
 #define SFE_RULE_CREATE_VLAN_MARKING_VALID (1<<7) /**< VLAN marking fields are valid */
 #define SFE_RULE_CREATE_DIRECTION_VALID    (1<<8) /**< specify acceleration directions */
 #define SFE_RULE_CREATE_SRC_MAC_VALID	   (1<<9) /**< Source MAC valid */
+#define SFE_RULE_CREATE_MARK_VALID         (1<<10) /**< SKB mark fields are valid */
 
 /*
  * Source MAC address valid flags (to be used with mac_valid_flags field of sfe_ipv4_src_mac_rule structure)
@@ -210,6 +211,11 @@ struct sfe_qos_rule {
 	u32 return_qos_tag;	/**< QoS tag associated with this rule for return direction */
 };
 
+struct sfe_mark_rule {
+	u32 flow_mark;		/**< skb mark associated with this rule for flow direction */
+	u32 return_mark;	/**< skb mark associated with this rule for return direction */
+};
+
 /**
  * DSCP connection rule structure
  */
@@ -252,6 +258,7 @@ struct sfe_ipv4_rule_create_msg {
 	struct sfe_pppoe_rule pppoe_rule;		/**< PPPoE related accleration parameters */
 	struct sfe_qos_rule qos_rule;			/**< QoS related accleration parameters */
 	struct sfe_src_mac_rule src_mac_rule;		/**< Src Mac rule */
+	struct sfe_mark_rule mark_rule;			/**< skb mark related accleration parameters */
 	struct sfe_dscp_rule dscp_rule;			/**< DSCP related accleration parameters */
 	struct sfe_vlan_rule vlan_primary_rule;		/**< Primary VLAN related accleration parameters */
 	struct sfe_vlan_rule vlan_secondary_rule;	/**< Secondary VLAN related accleration parameters */
@@ -372,6 +379,7 @@ struct sfe_ipv6_rule_create_msg {
 	struct sfe_pppoe_rule pppoe_rule;		/**< PPPoE related accleration parameters */
 	struct sfe_qos_rule qos_rule;			/**< QoS related accleration parameters */
 	struct sfe_src_mac_rule src_mac_rule;		/**< Src Mac rule */
+	struct sfe_mark_rule mark_rule;			/**< skb mark related accleration parameters */
 	struct sfe_dscp_rule dscp_rule;			/**< DSCP related accleration parameters */
 	struct sfe_vlan_rule vlan_primary_rule;		/**< VLAN related accleration parameters */
 	struct sfe_vlan_rule vlan_secondary_rule;	/**< VLAN related accleration parameters */

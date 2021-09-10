@@ -475,9 +475,8 @@ int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	/*
 	 * Mark outgoing packet.
 	 */
-	skb->mark = cm->connection->mark;
-	if (skb->mark) {
-		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
+	if (unlikely(cm->flags & SFE_IPV6_CONNECTION_MATCH_FLAG_MARK)) {
+		skb->mark = cm->mark;
 	}
 
 	rcu_read_unlock();

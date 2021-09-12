@@ -2125,9 +2125,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 #endif
 
 	/*
-	 * For PPP links we don't write an L2 header.  For everything else we do.
+	 * For the non-arp interface, we don't write L2 HDR.
 	 */
-	if (!(dest_dev->flags & IFF_POINTOPOINT)) {
+	if (!(dest_dev->flags & IFF_NOARP)) {
 		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR;
 
 		/*
@@ -2189,9 +2189,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 #endif
 
 	/*
-	 * For PPP links we don't write an L2 header.  For everything else we do.
+	 * For the non-arp interface, we don't write L2 HDR.
 	 */
-	if (!(src_dev->flags & IFF_POINTOPOINT)) {
+	if (!(src_dev->flags & IFF_NOARP)) {
 		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR;
 
 		/*

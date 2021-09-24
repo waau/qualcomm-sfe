@@ -2394,17 +2394,9 @@ another_round:
 /*
  * sfe_ipv6_periodic_sync()
  */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0))
-static void sfe_ipv6_periodic_sync(unsigned long arg)
-#else
-static void sfe_ipv6_periodic_sync(struct timer_list *tl)
-#endif
+static void sfe_ipv6_periodic_sync(struct work_struct *work)
 {
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0))
-	struct sfe_ipv6 *si = (struct sfe_ipv6 *)arg;
-#else
-	struct sfe_ipv6 *si = from_timer(si, tl, timer);
-#endif
+	struct sfe_ipv6 *si = container_of((struct delayed_work *)work, struct sfe_ipv6, sync_dwork);
 	u64 now_jiffies;
 	int quota;
 	sfe_sync_rule_callback_t sync_rule_callback;
@@ -2484,7 +2476,7 @@ static void sfe_ipv6_periodic_sync(struct timer_list *tl)
 	rcu_read_unlock();
 
 done:
-	mod_timer(&si->timer, jiffies + ((HZ + 99) / 100));
+	schedule_delayed_work_on(si->work_cpu, (struct delayed_work *)work, ((HZ + 99) / 100));
 }
 
 /*
@@ -2974,7 +2966,7 @@ static ssize_t sfe_ipv6_set_flow_cookie(struct device *dev,
 					const char *buf, size_t size)
 {
 	struct sfe_ipv6 *si = &__si6;
-	strict_strtol(buf, 0, (long int *)&si->flow_cookie_enable);
+	si->flow_cookie_enable = strict_strtol(buf, NULL, 0);
 
 	return size;
 }
@@ -2985,6 +2977,43 @@ static ssize_t sfe_ipv6_set_flow_cookie(struct device *dev,
 static const struct device_attribute sfe_ipv6_flow_cookie_attr =
 	__ATTR(flow_cookie_enable, S_IWUSR | S_IRUGO, sfe_ipv6_get_flow_cookie, sfe_ipv6_set_flow_cookie);
 #endif /*CONFIG_NF_FLOW_COOKIE*/
+
+/*
+ * sfe_ipv6_get_cpu()
+ */
+static ssize_t sfe_ipv6_get_cpu(struct device *dev,
+					struct device_attribute *attr,
+					char *buf)
+{
+	struct sfe_ipv6 *si = &__si6;
+	return snprintf(buf, (ssize_t)PAGE_SIZE, "%d\n", si->work_cpu);
+}
+
+/*
+ * sfe_ipv4_set_cpu()
+ */
+static ssize_t sfe_ipv6_set_cpu(struct device *dev,
+					struct device_attribute *attr,
+					const char *buf, size_t size)
+{
+	struct sfe_ipv6 *si = &__si6;
+	int work_cpu;
+
+	work_cpu = simple_strtol(buf, NULL, 0);
+	if ((work_cpu >= 0) && (work_cpu <= NR_CPUS)) {
+		si->work_cpu = work_cpu;
+	} else {
+		dev_err(dev, "%s is not in valid range[0,%d]", buf, NR_CPUS);
+	}
+
+	return size;
+}
+/*
+ * sysfs attributes.
+ */
+static const struct device_attribute sfe_ipv6_cpu_attr =
+	__ATTR(stat_work_cpu, S_IWUSR | S_IRUGO, sfe_ipv6_get_cpu, sfe_ipv6_set_cpu);
+
 
  /*
  * sfe_ipv6_hash_init()
@@ -3036,11 +3065,18 @@ int sfe_ipv6_init(void)
 		goto exit2;
 	}
 
+	result = sysfs_create_file(si->sys_sfe_ipv6, &sfe_ipv6_cpu_attr.attr);
+	if (result) {
+		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
+		goto exit3;
+	}
+
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	result = sysfs_create_file(si->sys_sfe_ipv6, &sfe_ipv6_flow_cookie_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register flow cookie enable file: %d\n", result);
-		goto exit3;
+		goto exit4;
 	}
 #endif /* CONFIG_NF_FLOW_COOKIE */
 
@@ -3050,31 +3086,29 @@ int sfe_ipv6_init(void)
 	result = register_chrdev(0, "sfe_ipv6", &sfe_ipv6_debug_dev_fops);
 	if (result < 0) {
 		DEBUG_ERROR("Failed to register chrdev: %d\n", result);
-		goto exit4;
+		goto exit5;
 	}
 
 	si->debug_dev = result;
+	si->work_cpu = WORK_CPU_UNBOUND;
 
 	/*
-	 * Create a timer to handle periodic statistics.
+	 * Create work to handle periodic statistics.
 	 */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0))
-	setup_timer(&si->timer, sfe_ipv6_periodic_sync, (unsigned long)si);
-#else
-	timer_setup(&si->timer, sfe_ipv6_periodic_sync, 0);
-#endif
-	mod_timer(&si->timer, jiffies + ((HZ + 99) / 100));
-
+	INIT_DELAYED_WORK(&(si->sync_dwork), sfe_ipv6_periodic_sync);
+	schedule_delayed_work_on(si->work_cpu, &(si->sync_dwork), ((HZ + 99) / 100));
 	spin_lock_init(&si->lock);
 
 	return 0;
 
-exit4:
+exit5:
 #ifdef CONFIG_NF_FLOW_COOKIE
 	sysfs_remove_file(si->sys_sfe_ipv6, &sfe_ipv6_flow_cookie_attr.attr);
 
-exit3:
+exit4:
 #endif /* CONFIG_NF_FLOW_COOKIE */
+	sysfs_remove_file(si->sys_sfe_ipv6, &sfe_ipv6_cpu_attr.attr);
+exit3:
 	sysfs_remove_file(si->sys_sfe_ipv6, &sfe_ipv6_debug_dev_attr.attr);
 
 exit2:
@@ -3101,7 +3135,7 @@ void sfe_ipv6_exit(void)
 	 */
 	sfe_ipv6_destroy_all_rules_for_dev(NULL);
 
-	del_timer_sync(&si->timer);
+	cancel_delayed_work(&si->sync_dwork);
 
 	unregister_chrdev(si->debug_dev, "sfe_ipv6");
 
@@ -3110,6 +3144,9 @@ void sfe_ipv6_exit(void)
 #ifdef CONFIG_NF_FLOW_COOKIE
 	sysfs_remove_file(si->sys_sfe_ipv6, &sfe_ipv6_flow_cookie_attr.attr);
 #endif /* CONFIG_NF_FLOW_COOKIE */
+
+	sysfs_remove_file(si->sys_sfe_ipv6, &sfe_ipv6_cpu_attr.attr);
+
 	sysfs_remove_file(si->sys_sfe_ipv6, &sfe_ipv6_debug_dev_attr.attr);
 
 	kobject_put(si->sys_sfe_ipv6);

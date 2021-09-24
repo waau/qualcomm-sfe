@@ -261,7 +261,9 @@ struct sfe_ipv4 {
 	struct sfe_ipv4_connection *all_connections_tail;
 					/* Tail of the list of all connections */
 	unsigned int num_connections;	/* Number of connections */
-	struct timer_list timer;	/* Timer used for periodic sync ops */
+	struct delayed_work sync_dwork;	/* Work to sync the statistics */
+	unsigned int work_cpu;		/* The core to run stats sync on */
+
 	sfe_sync_rule_callback_t __rcu sync_rule_callback;
 					/* Callback function registered by a connection manager for stats syncing */
 	struct sfe_ipv4_connection *conn_hash[SFE_IPV4_CONNECTION_HASH_SIZE];

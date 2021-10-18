@@ -2,7 +2,7 @@
  * sfe_drv.c
  *	simulated sfe driver for shortcut forwarding engine.
  *
- * Copyright (c) 2015,2016 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2015,2016,2021 The Linux Foundation. All rights reserved.
  * Permission to use, copy, modify, and/or distribute this software for
  * any purpose with or without fee is hereby granted, provided that the
  * above copyright notice and this permission notice appear in all copies.
@@ -1162,16 +1162,17 @@ int sfe_drv_recv(struct sk_buff *skb)
 
 	dev = skb->dev;
 
-/*
- * TODO: Remove the check when INgress Qdisc is ported to 5.4 kernel.
- */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 #ifdef CONFIG_NET_CLS_ACT
 	/*
 	 * If ingress Qdisc configured, and packet not processed by ingress Qdisc yet
 	 * We can not accelerate this packet.
 	 */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0))
 	if (dev->ingress_queue && !(skb->tc_verd & TC_NCLS)) {
+		return 0;
+	}
+#else
+	if (rcu_access_pointer(dev->miniq_ingress) && !skb->tc_skip_classify) {
 		return 0;
 	}
 #endif

@@ -30,8 +30,10 @@
 #include "sfe_api.h"
 #include "sfe.h"
 
+extern int max_ipv4_conn;
+extern int max_ipv6_conn;
+
 #define SFE_MESSAGE_VERSION 0x1
-#define SFE_MAX_CONNECTION_NUM 65535
 #define sfe_ipv6_addr_copy(src, dest) memcpy((void *)(dest), (void *)(src), 16)
 #define sfe_ipv4_stopped(CTX) (rcu_dereference((CTX)->ipv4_stats_sync_cb) == NULL)
 #define sfe_ipv6_stopped(CTX) (rcu_dereference((CTX)->ipv6_stats_sync_cb) == NULL)
@@ -608,7 +610,7 @@ EXPORT_SYMBOL(sfe_ipv4_msg_init);
  */
 int sfe_ipv4_max_conn_count(void)
 {
-	return SFE_MAX_CONNECTION_NUM;
+	return max_ipv4_conn;
 }
 EXPORT_SYMBOL(sfe_ipv4_max_conn_count);
 
@@ -932,7 +934,7 @@ EXPORT_SYMBOL(sfe_ipv6_msg_init);
  */
 int sfe_ipv6_max_conn_count(void)
 {
-	return SFE_MAX_CONNECTION_NUM;
+	return max_ipv6_conn;
 }
 EXPORT_SYMBOL(sfe_ipv6_max_conn_count);
 

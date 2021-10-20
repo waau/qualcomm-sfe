@@ -18,6 +18,20 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
+#ifndef __SFE_H
+#define __SFE_H
+
+/*
+ * Maximum number of accelerated IPv4 or IPv6 connections
+ */
+#if defined(SFE_MEM_PROFILE_LOW)
+#define SFE_MAX_CONNECTION_NUM 512
+#elif defined(SFE_MEM_PROFILE_MEDIUM)
+#define SFE_MAX_CONNECTION_NUM 2048
+#else
+#define SFE_MAX_CONNECTION_NUM 4096
+#endif
+
 /*
  * IPv6 address structure
  */
@@ -201,3 +215,5 @@ static inline int sfe_addr_equal(sfe_ip_addr_t *a,
 
 int sfe_init_if(void);
 void sfe_exit_if(void);
+
+#endif /* __SFE_H */

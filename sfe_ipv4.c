@@ -78,7 +78,7 @@ static struct sfe_ipv4 __si;
  *
  * Note that this function assumes that we have only 20 bytes of IP header.
  */
-static inline u16 sfe_ipv4_gen_ip_csum(struct sfe_ipv4_ip_hdr *iph)
+static inline u16 sfe_ipv4_gen_ip_csum(struct iphdr *iph)
 {
 	u32 sum;
 	u16 *i = (u16 *)iph;
@@ -750,9 +750,9 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si,
  *	Handle UDP packet receives and forwarding.
  */
 static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct sfe_ipv4_ip_hdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find)
 {
-	struct sfe_ipv4_udp_hdr *udph;
+	struct udphdr *udph;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -764,7 +764,7 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (unlikely(!pskb_may_pull(skb, (sizeof(struct sfe_ipv4_udp_hdr) + ihl)))) {
+	if (unlikely(!pskb_may_pull(skb, (sizeof(struct udphdr) + ihl)))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -782,7 +782,7 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	src_ip = iph->saddr;
 	dest_ip = iph->daddr;
 
-	udph = (struct sfe_ipv4_udp_hdr *)(skb->data + ihl);
+	udph = (struct udphdr *)(skb->data + ihl);
 	src_port = udph->source;
 	dest_port = udph->dest;
 
@@ -889,8 +889,8 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Update the iph and udph pointers with the unshared skb's data area.
 		 */
-		iph = (struct sfe_ipv4_ip_hdr *)skb->data;
-		udph = (struct sfe_ipv4_udp_hdr *)(skb->data + ihl);
+		iph = (struct iphdr *)skb->data;
+		udph = (struct udphdr *)(skb->data + ihl);
 	}
 
 	/*
@@ -1001,14 +1001,10 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			/*
 			 * For the simple case we write this really fast.
 			 */
-			struct sfe_ipv4_eth_hdr *eth = (struct sfe_ipv4_eth_hdr *)__skb_push(skb, ETH_HLEN);
+			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
 			eth->h_proto = htons(ETH_P_IP);
-			eth->h_dest[0] = cm->xmit_dest_mac[0];
-			eth->h_dest[1] = cm->xmit_dest_mac[1];
-			eth->h_dest[2] = cm->xmit_dest_mac[2];
-			eth->h_source[0] = cm->xmit_src_mac[0];
-			eth->h_source[1] = cm->xmit_src_mac[1];
-			eth->h_source[2] = cm->xmit_src_mac[2];
+			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
+			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
 		}
 	}
 
@@ -1053,10 +1049,10 @@ static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
  * sfe_ipv4_process_tcp_option_sack()
  *	Parse TCP SACK option and update ack according
  */
-static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcp_hdr *th, const u32 data_offs,
+static bool sfe_ipv4_process_tcp_option_sack(const struct tcphdr *th, const u32 data_offs,
 					     u32 *ack)
 {
-	u32 length = sizeof(struct sfe_ipv4_tcp_hdr);
+	u32 length = sizeof(struct tcphdr);
 	u8 *ptr = (u8 *)th + length;
 
 	/*
@@ -1134,9 +1130,9 @@ static bool sfe_ipv4_process_tcp_option_sack(const struct sfe_ipv4_tcp_hdr *th, 
  *	Handle TCP packet receives and forwarding.
  */
 static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct sfe_ipv4_ip_hdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find)
 {
-	struct sfe_ipv4_tcp_hdr *tcph;
+	struct tcphdr *tcph;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -1150,7 +1146,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (unlikely(!pskb_may_pull(skb, (sizeof(struct sfe_ipv4_tcp_hdr) + ihl)))) {
+	if (unlikely(!pskb_may_pull(skb, (sizeof(struct tcphdr) + ihl)))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_TCP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1168,7 +1164,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 	src_ip = iph->saddr;
 	dest_ip = iph->daddr;
 
-	tcph = (struct sfe_ipv4_tcp_hdr *)(skb->data + ihl);
+	tcph = (struct tcphdr *)(skb->data + ihl);
 	src_port = tcph->source;
 	dest_port = tcph->dest;
 	flags = tcp_flag_word(tcph);
@@ -1322,7 +1318,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		 * Check that our TCP data offset isn't too short.
 		 */
 		data_offs = tcph->doff << 2;
-		if (unlikely(data_offs < sizeof(struct sfe_ipv4_tcp_hdr))) {
+		if (unlikely(data_offs < sizeof(struct tcphdr))) {
 			struct sfe_ipv4_connection *c = cm->connection;
 			sfe_ipv4_remove_sfe_ipv4_connection(si, c);
 			si->exception_events[SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_DATA_OFFS]++;
@@ -1354,7 +1350,7 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Check that our TCP data offset isn't past the end of the packet.
 		 */
-		data_offs += sizeof(struct sfe_ipv4_ip_hdr);
+		data_offs += sizeof(struct iphdr);
 		if (unlikely(len < data_offs)) {
 			struct sfe_ipv4_connection *c = cm->connection;
 			sfe_ipv4_remove_sfe_ipv4_connection(si, c);
@@ -1465,8 +1461,8 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Update the iph and tcph pointers with the unshared skb's data area.
 		 */
-		iph = (struct sfe_ipv4_ip_hdr *)skb->data;
-		tcph = (struct sfe_ipv4_tcp_hdr *)(skb->data + ihl);
+		iph = (struct iphdr *)skb->data;
+		tcph = (struct tcphdr *)(skb->data + ihl);
 	}
 
 	/*
@@ -1571,14 +1567,12 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
 			/*
 			 * For the simple case we write this really fast.
 			 */
-			struct sfe_ipv4_eth_hdr *eth = (struct sfe_ipv4_eth_hdr *)__skb_push(skb, ETH_HLEN);
+			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
+
 			eth->h_proto = htons(ETH_P_IP);
-			eth->h_dest[0] = cm->xmit_dest_mac[0];
-			eth->h_dest[1] = cm->xmit_dest_mac[1];
-			eth->h_dest[2] = cm->xmit_dest_mac[2];
-			eth->h_source[0] = cm->xmit_src_mac[0];
-			eth->h_source[1] = cm->xmit_src_mac[1];
-			eth->h_source[2] = cm->xmit_src_mac[2];
+
+			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
+			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
 		}
 	}
 
@@ -1630,15 +1624,15 @@ static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct ne
  * within Linux has all of the correct state should it need it.
  */
 static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			      unsigned int len, struct sfe_ipv4_ip_hdr *iph, unsigned int ihl)
+			      unsigned int len, struct iphdr *iph, unsigned int ihl)
 {
 	struct icmphdr *icmph;
-	struct sfe_ipv4_ip_hdr *icmp_iph;
+	struct iphdr *icmp_iph;
 	unsigned int icmp_ihl_words;
 	unsigned int icmp_ihl;
 	u32 *icmp_trans_h;
-	struct sfe_ipv4_udp_hdr *icmp_udph;
-	struct sfe_ipv4_tcp_hdr *icmp_tcph;
+	struct udphdr *icmp_udph;
+	struct tcphdr *icmp_tcph;
 	__be32 src_ip;
 	__be32 dest_ip;
 	__be16 src_port;
@@ -1680,7 +1674,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	 * Do we have the full embedded IP header?
 	 */
 	len -= sizeof(struct icmphdr);
-	pull_len += sizeof(struct sfe_ipv4_ip_hdr);
+	pull_len += sizeof(struct iphdr);
 	if (!pskb_may_pull(skb, pull_len)) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_HEADER_INCOMPLETE]++;
@@ -1694,7 +1688,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	/*
 	 * Is our embedded IP version wrong?
 	 */
-	icmp_iph = (struct sfe_ipv4_ip_hdr *)(icmph + 1);
+	icmp_iph = (struct iphdr *)(icmph + 1);
 	if (unlikely(icmp_iph->version != 4)) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_NON_V4]++;
@@ -1710,7 +1704,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 	 */
 	icmp_ihl_words = icmp_iph->ihl;
 	icmp_ihl = icmp_ihl_words << 2;
-	pull_len += icmp_ihl - sizeof(struct sfe_ipv4_ip_hdr);
+	pull_len += icmp_ihl - sizeof(struct iphdr);
 	if (!pskb_may_pull(skb, pull_len)) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_IP_OPTIONS_INCOMPLETE]++;
@@ -1744,7 +1738,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 			return 0;
 		}
 
-		icmp_udph = (struct sfe_ipv4_udp_hdr *)icmp_trans_h;
+		icmp_udph = (struct udphdr *)icmp_trans_h;
 		src_port = icmp_udph->source;
 		dest_port = icmp_udph->dest;
 		break;
@@ -1765,7 +1759,7 @@ static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct n
 			return 0;
 		}
 
-		icmp_tcph = (struct sfe_ipv4_tcp_hdr *)icmp_trans_h;
+		icmp_tcph = (struct tcphdr *)icmp_trans_h;
 		src_port = icmp_tcph->source;
 		dest_port = icmp_tcph->dest;
 		break;
@@ -1831,14 +1825,14 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	unsigned int ihl;
 	bool flush_on_find;
 	bool ip_options;
-	struct sfe_ipv4_ip_hdr *iph;
+	struct iphdr *iph;
 	u32 protocol;
 
 	/*
 	 * Check that we have space for an IP header here.
 	 */
 	len = skb->len;
-	if (unlikely(!pskb_may_pull(skb, sizeof(struct sfe_ipv4_ip_hdr)))) {
+	if (unlikely(!pskb_may_pull(skb, sizeof(struct iphdr)))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1851,9 +1845,9 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	/*
 	 * Check that our "total length" is large enough for an IP header.
 	 */
-	iph = (struct sfe_ipv4_ip_hdr *)skb->data;
+	iph = (struct iphdr *)skb->data;
 	tot_len = ntohs(iph->tot_len);
-	if (unlikely(tot_len < sizeof(struct sfe_ipv4_ip_hdr))) {
+	if (unlikely(tot_len < sizeof(struct iphdr))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV4_EXCEPTION_EVENT_BAD_TOTAL_LENGTH]++;
 		si->packets_not_forwarded++;
@@ -1913,7 +1907,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	 * options we need to recheck our header size.
 	 */
 	ihl = iph->ihl << 2;
-	ip_options = unlikely(ihl != sizeof(struct sfe_ipv4_ip_hdr)) ? true : false;
+	ip_options = unlikely(ihl != sizeof(struct iphdr)) ? true : false;
 	if (unlikely(ip_options)) {
 		if (unlikely(len < ihl)) {
 			spin_lock_bh(&si->lock);

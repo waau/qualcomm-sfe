@@ -90,19 +90,19 @@ static const struct device_attribute sfe_ipv6_debug_dev_attr =
  */
 static inline bool sfe_ipv6_is_ext_hdr(u8 hdr)
 {
-	return (hdr == SFE_IPV6_EXT_HDR_HOP) ||
-		(hdr == SFE_IPV6_EXT_HDR_ROUTING) ||
-		(hdr == SFE_IPV6_EXT_HDR_FRAG) ||
-		(hdr == SFE_IPV6_EXT_HDR_AH) ||
-		(hdr == SFE_IPV6_EXT_HDR_DST) ||
-		(hdr == SFE_IPV6_EXT_HDR_MH);
+	return (hdr == NEXTHDR_HOP) ||
+		(hdr == NEXTHDR_ROUTING) ||
+		(hdr == NEXTHDR_FRAGMENT) ||
+		(hdr == NEXTHDR_AUTH) ||
+		(hdr == NEXTHDR_DEST) ||
+		(hdr == NEXTHDR_MOBILITY);
 }
 
 /*
  * sfe_ipv6_change_dsfield()
  *	change dscp field in IPv6 packet
  */
-static inline void sfe_ipv6_change_dsfield(struct sfe_ipv6_ip_hdr *iph, u8 dscp)
+static inline void sfe_ipv6_change_dsfield(struct ipv6hdr *iph, u8 dscp)
 {
 	__be16 *p = (__be16 *)iph;
 
@@ -239,20 +239,20 @@ static void sfe_ipv6_connection_match_compute_translations(struct sfe_ipv6_conne
 		 * edit packets in this stream very quickly.  The algorithm is from RFC1624.
 		 */
 		idx_32 = diff;
-		*(idx_32++) = cm->match_src_ip->addr[0];
-		*(idx_32++) = cm->match_src_ip->addr[1];
-		*(idx_32++) = cm->match_src_ip->addr[2];
-		*(idx_32++) = cm->match_src_ip->addr[3];
+		*(idx_32++) = cm->match_src_ip[0].addr[0];
+		*(idx_32++) = cm->match_src_ip[0].addr[1];
+		*(idx_32++) = cm->match_src_ip[0].addr[2];
+		*(idx_32++) = cm->match_src_ip[0].addr[3];
 
 		idx_16 = (u16 *)idx_32;
 		*(idx_16++) = cm->match_src_port;
 		*(idx_16++) = ~cm->xlate_src_port;
 		idx_32 = (u32 *)idx_16;
 
-		*(idx_32++) = ~cm->xlate_src_ip->addr[0];
-		*(idx_32++) = ~cm->xlate_src_ip->addr[1];
-		*(idx_32++) = ~cm->xlate_src_ip->addr[2];
-		*(idx_32++) = ~cm->xlate_src_ip->addr[3];
+		*(idx_32++) = ~cm->xlate_src_ip[0].addr[0];
+		*(idx_32++) = ~cm->xlate_src_ip[0].addr[1];
+		*(idx_32++) = ~cm->xlate_src_ip[0].addr[2];
+		*(idx_32++) = ~cm->xlate_src_ip[0].addr[3];
 
 		/*
 		 * When we compute this fold it down to a 16-bit offset
@@ -282,20 +282,20 @@ static void sfe_ipv6_connection_match_compute_translations(struct sfe_ipv6_conne
 		 * edit packets in this stream very quickly.  The algorithm is from RFC1624.
 		 */
 		idx_32 = diff;
-		*(idx_32++) = cm->match_dest_ip->addr[0];
-		*(idx_32++) = cm->match_dest_ip->addr[1];
-		*(idx_32++) = cm->match_dest_ip->addr[2];
-		*(idx_32++) = cm->match_dest_ip->addr[3];
+		*(idx_32++) = cm->match_dest_ip[0].addr[0];
+		*(idx_32++) = cm->match_dest_ip[0].addr[1];
+		*(idx_32++) = cm->match_dest_ip[0].addr[2];
+		*(idx_32++) = cm->match_dest_ip[0].addr[3];
 
 		idx_16 = (u16 *)idx_32;
 		*(idx_16++) = cm->match_dest_port;
 		*(idx_16++) = ~cm->xlate_dest_port;
 		idx_32 = (u32 *)idx_16;
 
-		*(idx_32++) = ~cm->xlate_dest_ip->addr[0];
-		*(idx_32++) = ~cm->xlate_dest_ip->addr[1];
-		*(idx_32++) = ~cm->xlate_dest_ip->addr[2];
-		*(idx_32++) = ~cm->xlate_dest_ip->addr[3];
+		*(idx_32++) = ~cm->xlate_dest_ip[0].addr[0];
+		*(idx_32++) = ~cm->xlate_dest_ip[0].addr[1];
+		*(idx_32++) = ~cm->xlate_dest_ip[0].addr[2];
+		*(idx_32++) = ~cm->xlate_dest_ip[0].addr[3];
 
 		/*
 		 * When we compute this fold it down to a 16-bit offset
@@ -784,9 +784,9 @@ static void sfe_ipv6_flush_connection(struct sfe_ipv6 *si,
  *	Handle UDP packet receives and forwarding.
  */
 static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct sfe_ipv6_ip_hdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool flush_on_find)
 {
-	struct sfe_ipv6_udp_hdr *udph;
+	struct udphdr *udph;
 	struct sfe_ipv6_addr *src_ip;
 	struct sfe_ipv6_addr *dest_ip;
 	__be16 src_port;
@@ -797,7 +797,7 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (!pskb_may_pull(skb, (sizeof(struct sfe_ipv6_udp_hdr) + ihl))) {
+	if (!pskb_may_pull(skb, (sizeof(struct udphdr) + ihl))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -812,10 +812,10 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	 * because we've almost certainly got that in the cache.  We may not yet have
 	 * the UDP header cached though so allow more time for any prefetching.
 	 */
-	src_ip = &iph->saddr;
-	dest_ip = &iph->daddr;
+	src_ip = (struct sfe_ipv6_addr *)iph->saddr.s6_addr32;
+	dest_ip = (struct sfe_ipv6_addr *)iph->daddr.s6_addr32;
 
-	udph = (struct sfe_ipv6_udp_hdr *)(skb->data + ihl);
+	udph = (struct udphdr *)(skb->data + ihl);
 	src_port = udph->source;
 	dest_port = udph->dest;
 
@@ -921,8 +921,8 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Update the iph and udph pointers with the unshared skb's data area.
 		 */
-		iph = (struct sfe_ipv6_ip_hdr *)skb->data;
-		udph = (struct sfe_ipv6_udp_hdr *)(skb->data + ihl);
+		iph = (struct ipv6hdr *)skb->data;
+		udph = (struct udphdr *)(skb->data + ihl);
 	}
 
 	/*
@@ -943,7 +943,10 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	if (unlikely(cm->flags & SFE_IPV6_CONNECTION_MATCH_FLAG_XLATE_SRC)) {
 		u16 udp_csum;
 
-		iph->saddr = cm->xlate_src_ip[0];
+		iph->saddr.s6_addr32[0] = cm->xlate_src_ip[0].addr[0];
+		iph->saddr.s6_addr32[1] = cm->xlate_src_ip[0].addr[1];
+		iph->saddr.s6_addr32[2] = cm->xlate_src_ip[0].addr[2];
+		iph->saddr.s6_addr32[3] = cm->xlate_src_ip[0].addr[3];
 		udph->source = cm->xlate_src_port;
 
 		/*
@@ -964,7 +967,10 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	if (unlikely(cm->flags & SFE_IPV6_CONNECTION_MATCH_FLAG_XLATE_DEST)) {
 		u16 udp_csum;
 
-		iph->daddr = cm->xlate_dest_ip[0];
+		iph->daddr.s6_addr32[0] = cm->xlate_dest_ip[0].addr[0];
+		iph->daddr.s6_addr32[1] = cm->xlate_dest_ip[0].addr[1];
+		iph->daddr.s6_addr32[2] = cm->xlate_dest_ip[0].addr[2];
+		iph->daddr.s6_addr32[3] = cm->xlate_dest_ip[0].addr[3];
 		udph->dest = cm->xlate_dest_port;
 
 		/*
@@ -1014,14 +1020,11 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			/*
 			 * For the simple case we write this really fast.
 			 */
-			struct sfe_ipv6_eth_hdr *eth = (struct sfe_ipv6_eth_hdr *)__skb_push(skb, ETH_HLEN);
+			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
 			eth->h_proto = htons(ETH_P_IPV6);
-			eth->h_dest[0] = cm->xmit_dest_mac[0];
-			eth->h_dest[1] = cm->xmit_dest_mac[1];
-			eth->h_dest[2] = cm->xmit_dest_mac[2];
-			eth->h_source[0] = cm->xmit_src_mac[0];
-			eth->h_source[1] = cm->xmit_src_mac[1];
-			eth->h_source[2] = cm->xmit_src_mac[2];
+			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
+			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
+
 		}
 	}
 
@@ -1066,10 +1069,10 @@ static int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
  * sfe_ipv6_process_tcp_option_sack()
  *	Parse TCP SACK option and update ack according
  */
-static bool sfe_ipv6_process_tcp_option_sack(const struct sfe_ipv6_tcp_hdr *th, const u32 data_offs,
+static bool sfe_ipv6_process_tcp_option_sack(const struct tcphdr *th, const u32 data_offs,
 					     u32 *ack)
 {
-	u32 length = sizeof(struct sfe_ipv6_tcp_hdr);
+	u32 length = sizeof(struct tcphdr);
 	u8 *ptr = (u8 *)th + length;
 
 	/*
@@ -1147,9 +1150,9 @@ static bool sfe_ipv6_process_tcp_option_sack(const struct sfe_ipv6_tcp_hdr *th, 
  *	Handle TCP packet receives and forwarding.
  */
 static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct sfe_ipv6_ip_hdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool flush_on_find)
 {
-	struct sfe_ipv6_tcp_hdr *tcph;
+	struct tcphdr *tcph;
 	struct sfe_ipv6_addr *src_ip;
 	struct sfe_ipv6_addr *dest_ip;
 	__be16 src_port;
@@ -1162,7 +1165,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
-	if (!pskb_may_pull(skb, (sizeof(struct sfe_ipv6_tcp_hdr) + ihl))) {
+	if (!pskb_may_pull(skb, (sizeof(struct tcphdr) + ihl))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1177,10 +1180,10 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 	 * because we've almost certainly got that in the cache.  We may not yet have
 	 * the TCP header cached though so allow more time for any prefetching.
 	 */
-	src_ip = &iph->saddr;
-	dest_ip = &iph->daddr;
+	src_ip = (struct sfe_ipv6_addr *)iph->saddr.s6_addr32;
+	dest_ip = (struct sfe_ipv6_addr *)iph->daddr.s6_addr32;
 
-	tcph = (struct sfe_ipv6_tcp_hdr *)(skb->data + ihl);
+	tcph = (struct tcphdr *)(skb->data + ihl);
 	src_port = tcph->source;
 	dest_port = tcph->dest;
 	flags = tcp_flag_word(tcph);
@@ -1334,7 +1337,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		 * Check that our TCP data offset isn't too short.
 		 */
 		data_offs = tcph->doff << 2;
-		if (unlikely(data_offs < sizeof(struct sfe_ipv6_tcp_hdr))) {
+		if (unlikely(data_offs < sizeof(struct tcphdr))) {
 			struct sfe_ipv6_connection *c = cm->connection;
 			sfe_ipv6_remove_connection(si, c);
 			si->exception_events[SFE_IPV6_EXCEPTION_EVENT_TCP_SMALL_DATA_OFFS]++;
@@ -1366,7 +1369,7 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Check that our TCP data offset isn't past the end of the packet.
 		 */
-		data_offs += sizeof(struct sfe_ipv6_ip_hdr);
+		data_offs += sizeof(struct ipv6hdr);
 		if (unlikely(len < data_offs)) {
 			struct sfe_ipv6_connection *c = cm->connection;
 			sfe_ipv6_remove_connection(si, c);
@@ -1477,8 +1480,8 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		/*
 		 * Update the iph and tcph pointers with the unshared skb's data area.
 		 */
-		iph = (struct sfe_ipv6_ip_hdr *)skb->data;
-		tcph = (struct sfe_ipv6_tcp_hdr *)(skb->data + ihl);
+		iph = (struct ipv6hdr *)skb->data;
+		tcph = (struct tcphdr *)(skb->data + ihl);
 	}
 
 	/*
@@ -1500,7 +1503,10 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		u16 tcp_csum;
 		u32 sum;
 
-		iph->saddr = cm->xlate_src_ip[0];
+		iph->saddr.s6_addr32[0] = cm->xlate_src_ip[0].addr[0];
+		iph->saddr.s6_addr32[1] = cm->xlate_src_ip[0].addr[1];
+		iph->saddr.s6_addr32[2] = cm->xlate_src_ip[0].addr[2];
+		iph->saddr.s6_addr32[3] = cm->xlate_src_ip[0].addr[3];
 		tcph->source = cm->xlate_src_port;
 
 		/*
@@ -1520,7 +1526,10 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 		u16 tcp_csum;
 		u32 sum;
 
-		iph->daddr = cm->xlate_dest_ip[0];
+		iph->daddr.s6_addr32[0] = cm->xlate_dest_ip[0].addr[0];
+		iph->daddr.s6_addr32[1] = cm->xlate_dest_ip[0].addr[1];
+		iph->daddr.s6_addr32[2] = cm->xlate_dest_ip[0].addr[2];
+		iph->daddr.s6_addr32[3] = cm->xlate_dest_ip[0].addr[3];
 		tcph->dest = cm->xlate_dest_port;
 
 		/*
@@ -1568,14 +1577,10 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
 			/*
 			 * For the simple case we write this really fast.
 			 */
-			struct sfe_ipv6_eth_hdr *eth = (struct sfe_ipv6_eth_hdr *)__skb_push(skb, ETH_HLEN);
+			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
 			eth->h_proto = htons(ETH_P_IPV6);
-			eth->h_dest[0] = cm->xmit_dest_mac[0];
-			eth->h_dest[1] = cm->xmit_dest_mac[1];
-			eth->h_dest[2] = cm->xmit_dest_mac[2];
-			eth->h_source[0] = cm->xmit_src_mac[0];
-			eth->h_source[1] = cm->xmit_src_mac[1];
-			eth->h_source[2] = cm->xmit_src_mac[2];
+			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
+			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
 		}
 	}
 
@@ -1627,12 +1632,12 @@ static int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct ne
  * within Linux has all of the correct state should it need it.
  */
 static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_device *dev,
-			      unsigned int len, struct sfe_ipv6_ip_hdr *iph, unsigned int ihl)
+			      unsigned int len, struct ipv6hdr *iph, unsigned int ihl)
 {
 	struct icmp6hdr *icmph;
-	struct sfe_ipv6_ip_hdr *icmp_iph;
-	struct sfe_ipv6_udp_hdr *icmp_udph;
-	struct sfe_ipv6_tcp_hdr *icmp_tcph;
+	struct ipv6hdr *icmp_iph;
+	struct udphdr *icmp_udph;
+	struct tcphdr *icmp_tcph;
 	struct sfe_ipv6_addr *src_ip;
 	struct sfe_ipv6_addr *dest_ip;
 	__be16 src_port;
@@ -1677,7 +1682,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	 */
 	len -= sizeof(struct icmp6hdr);
 	ihl += sizeof(struct icmp6hdr);
-	if (!pskb_may_pull(skb, ihl + sizeof(struct sfe_ipv6_ip_hdr) + sizeof(struct sfe_ipv6_ext_hdr))) {
+	if (!pskb_may_pull(skb, ihl + sizeof(struct ipv6hdr) + sizeof(struct sfe_ipv6_ext_hdr))) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_IPV6_HEADER_INCOMPLETE]++;
 		si->packets_not_forwarded++;
@@ -1690,7 +1695,7 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	/*
 	 * Is our embedded IP version wrong?
 	 */
-	icmp_iph = (struct sfe_ipv6_ip_hdr *)(icmph + 1);
+	icmp_iph = (struct ipv6hdr *)(icmph + 1);
 	if (unlikely(icmp_iph->version != 6)) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_ICMP_IPV6_NON_V6]++;
@@ -1701,16 +1706,16 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 		return 0;
 	}
 
-	len -= sizeof(struct sfe_ipv6_ip_hdr);
-	ihl += sizeof(struct sfe_ipv6_ip_hdr);
+	len -= sizeof(struct ipv6hdr);
+	ihl += sizeof(struct ipv6hdr);
 	next_hdr = icmp_iph->nexthdr;
 	while (unlikely(sfe_ipv6_is_ext_hdr(next_hdr))) {
 		struct sfe_ipv6_ext_hdr *ext_hdr;
 		unsigned int ext_hdr_len;
 
 		ext_hdr = (struct sfe_ipv6_ext_hdr *)(skb->data + ihl);
-		if (next_hdr == SFE_IPV6_EXT_HDR_FRAG) {
-			struct sfe_ipv6_frag_hdr *frag_hdr = (struct sfe_ipv6_frag_hdr *)ext_hdr;
+		if (next_hdr == NEXTHDR_FRAGMENT) {
+			struct frag_hdr *frag_hdr = (struct frag_hdr *)ext_hdr;
 			unsigned int frag_off = ntohs(frag_hdr->frag_off);
 
 			if (frag_off & SFE_IPV6_FRAG_OFFSET) {
@@ -1751,13 +1756,13 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 	 */
 	switch (next_hdr) {
 	case IPPROTO_UDP:
-		icmp_udph = (struct sfe_ipv6_udp_hdr *)(skb->data + ihl);
+		icmp_udph = (struct udphdr *)(skb->data + ihl);
 		src_port = icmp_udph->source;
 		dest_port = icmp_udph->dest;
 		break;
 
 	case IPPROTO_TCP:
-		icmp_tcph = (struct sfe_ipv6_tcp_hdr *)(skb->data + ihl);
+		icmp_tcph = (struct tcphdr *)(skb->data + ihl);
 		src_port = icmp_tcph->source;
 		dest_port = icmp_tcph->dest;
 		break;
@@ -1772,8 +1777,8 @@ static int sfe_ipv6_recv_icmp(struct sfe_ipv6 *si, struct sk_buff *skb, struct n
 		return 0;
 	}
 
-	src_ip = &icmp_iph->saddr;
-	dest_ip = &icmp_iph->daddr;
+	src_ip = (struct sfe_ipv6_addr *)icmp_iph->saddr.s6_addr32;
+	dest_ip = (struct sfe_ipv6_addr *)icmp_iph->daddr.s6_addr32;
 
 	spin_lock_bh(&si->lock);
 
@@ -1819,9 +1824,9 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 	struct sfe_ipv6 *si = &__si6;
 	unsigned int len;
 	unsigned int payload_len;
-	unsigned int ihl = sizeof(struct sfe_ipv6_ip_hdr);
+	unsigned int ihl = sizeof(struct ipv6hdr);
 	bool flush_on_find = false;
-	struct sfe_ipv6_ip_hdr *iph;
+	struct ipv6hdr *iph;
 	u8 next_hdr;
 
 	/*
@@ -1841,7 +1846,7 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 	/*
 	 * Is our IP version wrong?
 	 */
-	iph = (struct sfe_ipv6_ip_hdr *)skb->data;
+	iph = (struct ipv6hdr *)skb->data;
 	if (unlikely(iph->version != 6)) {
 		spin_lock_bh(&si->lock);
 		si->exception_events[SFE_IPV6_EXCEPTION_EVENT_NON_V6]++;
@@ -1862,7 +1867,7 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 		si->packets_not_forwarded++;
 		spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("payload_len: %u, exceeds len: %u\n", payload_len, (len - (unsigned int)sizeof(struct sfe_ipv6_ip_hdr)));
+		DEBUG_TRACE("payload_len: %u, exceeds len: %u\n", payload_len, (len - (unsigned int)sizeof(struct ipv6hdr)));
 		return 0;
 	}
 
@@ -1872,8 +1877,8 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 		unsigned int ext_hdr_len;
 
 		ext_hdr = (struct sfe_ipv6_ext_hdr *)(skb->data + ihl);
-		if (next_hdr == SFE_IPV6_EXT_HDR_FRAG) {
-			struct sfe_ipv6_frag_hdr *frag_hdr = (struct sfe_ipv6_frag_hdr *)ext_hdr;
+		if (next_hdr == NEXTHDR_FRAGMENT) {
+			struct frag_hdr *frag_hdr = (struct frag_hdr *)ext_hdr;
 			unsigned int frag_off = ntohs(frag_hdr->frag_off);
 
 			if (frag_off & SFE_IPV6_FRAG_OFFSET) {

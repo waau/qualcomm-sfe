@@ -18,85 +18,10 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-/*
- * By default Linux IP header and transport layer header structures are
- * unpacked, assuming that such headers should be 32-bit aligned.
- * Unfortunately some wireless adaptors can't cope with this requirement and
- * some CPUs can't handle misaligned accesses.  For those platforms we
- * define SFE_IPV6_UNALIGNED_IP_HEADER and mark the structures as packed.
- * When we do this the compiler will generate slightly worse code than for the
- * aligned case (on most platforms) but will be much quicker than fixing
- * things up in an unaligned trap handler.
- */
-#define SFE_IPV6_UNALIGNED_IP_HEADER 1
-#if SFE_IPV6_UNALIGNED_IP_HEADER
-#define SFE_IPV6_UNALIGNED_STRUCT __attribute__((packed))
-#else
-#define SFE_IPV6_UNALIGNED_STRUCT
-#endif
-
 #define CHAR_DEV_MSG_SIZE 768
-
-/*
- * An Ethernet header, but with an optional "packed" attribute to
- * help with performance on some platforms (see the definition of
- * SFE_IPV6_UNALIGNED_STRUCT)
- */
-struct sfe_ipv6_eth_hdr {
-	__be16 h_dest[ETH_ALEN / 2];
-	__be16 h_source[ETH_ALEN / 2];
-	__be16 h_proto;
-} SFE_IPV6_UNALIGNED_STRUCT;
 
 #define SFE_IPV6_DSCP_MASK 0xf03f
 #define SFE_IPV6_DSCP_SHIFT 2
-
-/*
- * An IPv6 header, but with an optional "packed" attribute to
- * help with performance on some platforms (see the definition of
- * SFE_IPV6_UNALIGNED_STRUCT)
- */
-struct sfe_ipv6_ip_hdr {
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u8 priority:4,
-	     version:4;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	__u8 version:4,
-	     priority:4;
-#else
-#error	"Please fix <asm/byteorder.h>"
-#endif
-	__u8 flow_lbl[3];
-	__be16 payload_len;
-	__u8 nexthdr;
-	__u8 hop_limit;
-	struct sfe_ipv6_addr saddr;
-	struct sfe_ipv6_addr daddr;
-
-	/*
-	 * The extension header start here.
-	 */
-} SFE_IPV6_UNALIGNED_STRUCT;
-
-#define SFE_IPV6_EXT_HDR_HOP 0
-#define SFE_IPV6_EXT_HDR_ROUTING 43
-#define SFE_IPV6_EXT_HDR_FRAG 44
-#define SFE_IPV6_EXT_HDR_ESP 50
-#define SFE_IPV6_EXT_HDR_AH 51
-#define SFE_IPV6_EXT_HDR_NONE 59
-#define SFE_IPV6_EXT_HDR_DST 60
-#define SFE_IPV6_EXT_HDR_MH 135
-
-/*
- * fragmentation header
- */
-
-struct sfe_ipv6_frag_hdr {
-	__u8	nexthdr;
-	__u8	reserved;
-	__be16	frag_off;
-	__be32	identification;
-};
 
 #define	SFE_IPV6_FRAG_OFFSET	0xfff8
 
@@ -107,59 +32,7 @@ struct sfe_ipv6_ext_hdr {
 	__u8 next_hdr;
 	__u8 hdr_len;
 	__u8 padding[6];
-} SFE_IPV6_UNALIGNED_STRUCT;
-
-/*
- * A UDP header, but with an optional "packed" attribute to
- * help with performance on some platforms (see the definition of
- * SFE_IPV6_UNALIGNED_STRUCT)
- */
-struct sfe_ipv6_udp_hdr {
-	__be16 source;
-	__be16 dest;
-	__be16 len;
-	__sum16 check;
-} SFE_IPV6_UNALIGNED_STRUCT;
-
-/*
- * A TCP header, but with an optional "packed" attribute to
- * help with performance on some platforms (see the definition of
- * SFE_IPV6_UNALIGNED_STRUCT)
- */
-struct sfe_ipv6_tcp_hdr {
-	__be16 source;
-	__be16 dest;
-	__be32 seq;
-	__be32 ack_seq;
-#if defined(__LITTLE_ENDIAN_BITFIELD)
-	__u16 res1:4,
-	      doff:4,
-	      fin:1,
-	      syn:1,
-	      rst:1,
-	      psh:1,
-	      ack:1,
-	      urg:1,
-	      ece:1,
-	      cwr:1;
-#elif defined(__BIG_ENDIAN_BITFIELD)
-	__u16 doff:4,
-	      res1:4,
-	      cwr:1,
-	      ece:1,
-	      urg:1,
-	      ack:1,
-	      psh:1,
-	      rst:1,
-	      syn:1,
-	      fin:1;
-#else
-#error	"Adjust your <asm/byteorder.h> defines"
-#endif
-	__be16 window;
-	__sum16	check;
-	__be16 urg_ptr;
-} SFE_IPV6_UNALIGNED_STRUCT;
+};
 
 /*
  * Specifies the lower bound on ACK numbers carried in the TCP header

@@ -19,16 +19,6 @@
  */
 
 /*
- * connection flags.
- */
-#define SFE_CREATE_FLAG_NO_SEQ_CHECK BIT(0)
-					/* Indicates that we should not check sequence numbers */
-#define SFE_CREATE_FLAG_REMARK_PRIORITY BIT(1)
-					/* Indicates that we should remark priority of skb */
-#define SFE_CREATE_FLAG_REMARK_DSCP BIT(2)
-					/* Indicates that we should remark DSCP of packet */
-
-/*
  * IPv6 address structure
  */
 struct sfe_ipv6_addr {
@@ -39,58 +29,6 @@ typedef union {
 	__be32			ip;
 	struct sfe_ipv6_addr	ip6[1];
 } sfe_ip_addr_t;
-
-/*
- * connection creation structure.
- */
-struct sfe_connection_create {
-	int protocol;
-	struct net_device *src_dev;
-	struct net_device *dest_dev;
-	u32 flags;
-	u32 src_mtu;
-	u32 dest_mtu;
-	sfe_ip_addr_t src_ip;
-	sfe_ip_addr_t src_ip_xlate;
-	sfe_ip_addr_t dest_ip;
-	sfe_ip_addr_t dest_ip_xlate;
-	__be16 src_port;
-	__be16 src_port_xlate;
-	__be16 dest_port;
-	__be16 dest_port_xlate;
-	u8 src_mac[ETH_ALEN];
-	u8 src_mac_xlate[ETH_ALEN];
-	u8 dest_mac[ETH_ALEN];
-	u8 dest_mac_xlate[ETH_ALEN];
-	u8 src_td_window_scale;
-	u32 src_td_max_window;
-	u32 src_td_end;
-	u32 src_td_max_end;
-	u8 dest_td_window_scale;
-	u32 dest_td_max_window;
-	u32 dest_td_end;
-	u32 dest_td_max_end;
-	u32 mark;
-#ifdef CONFIG_XFRM
-	u32 original_accel;
-	u32 reply_accel;
-#endif
-	u32 src_priority;
-	u32 dest_priority;
-	u32 src_dscp;
-	u32 dest_dscp;
-};
-
-/*
- * connection destruction structure.
- */
-struct sfe_connection_destroy {
-	int protocol;
-	sfe_ip_addr_t src_ip;
-	sfe_ip_addr_t dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-};
 
 typedef enum sfe_sync_reason {
 	SFE_SYNC_REASON_STATS,	/* Sync is to synchronize stats */
@@ -171,11 +109,11 @@ typedef void (*sfe_sync_rule_callback_t)(struct sfe_connection_sync *);
  * IPv4 APIs used by connection manager
  */
 int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb);
-int sfe_ipv4_create_rule(struct sfe_connection_create *sic);
-void sfe_ipv4_destroy_rule(struct sfe_connection_destroy *sid);
+int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg);
+void sfe_ipv4_destroy_rule(struct sfe_ipv4_rule_destroy_msg *msg);
 void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);
 void sfe_ipv4_register_sync_rule_callback(sfe_sync_rule_callback_t callback);
-void sfe_ipv4_update_rule(struct sfe_connection_create *sic);
+void sfe_ipv4_update_rule(struct sfe_ipv4_rule_create_msg *msg);
 void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark);
 
 #ifdef SFE_SUPPORT_IPV6
@@ -183,11 +121,11 @@ void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark);
  * IPv6 APIs used by connection manager
  */
 int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb);
-int sfe_ipv6_create_rule(struct sfe_connection_create *sic);
-void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid);
+int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg);
+void sfe_ipv6_destroy_rule(struct sfe_ipv6_rule_destroy_msg *msg);
 void sfe_ipv6_destroy_all_rules_for_dev(struct net_device *dev);
 void sfe_ipv6_register_sync_rule_callback(sfe_sync_rule_callback_t callback);
-void sfe_ipv6_update_rule(struct sfe_connection_create *sic);
+void sfe_ipv6_update_rule(struct sfe_ipv6_rule_create_msg *msg);
 void sfe_ipv6_mark_rule(struct sfe_connection_mark *mark);
 #else
 static inline int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
@@ -195,12 +133,12 @@ static inline int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
 	return 0;
 }
 
-static inline int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
+static inline int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 {
 	return 0;
 }
 
-static inline void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
+static inline void sfe_ipv6_destroy_rule(struct sfe_ipv6_rule_destroy_msg *msg);
 {
 	return;
 }
@@ -215,7 +153,7 @@ static inline void sfe_ipv6_register_sync_rule_callback(sfe_sync_rule_callback_t
 	return;
 }
 
-static inline void sfe_ipv6_update_rule(struct sfe_connection_create *sic)
+static inline void sfe_ipv6_update_rule(struct sfe_ipv6_rule_create_msg *msg)
 {
 	return;
 }

@@ -24,6 +24,7 @@
 #include <linux/etherdevice.h>
 #include <linux/version.h>
 
+#include "sfe_api.h"
 #include "sfe.h"
 #include "sfe_ipv4.h"
 #include "sfe_ipv6.h"

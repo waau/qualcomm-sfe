@@ -27,8 +27,8 @@
 #include <net/pkt_sched.h>
 
 #include "sfe_debug.h"
-#include "sfe.h"
 #include "sfe_api.h"
+#include "sfe.h"
 
 #define SFE_MESSAGE_VERSION 0x1
 #define SFE_MAX_CONNECTION_NUM 65535
@@ -124,6 +124,8 @@ static struct sfe_ctx_instance_internal __sfe_ctx;
 /*
  * sfe_incr_exceptions()
  *	Increase an exception counter.
+ *
+ * TODO:  Merge sfe_ctx stats to ipv4 and ipv6 percpu stats.
  */
 static inline void sfe_incr_exceptions(sfe_exception_t except)
 {
@@ -441,13 +443,12 @@ static void sfe_ipv4_stats_sync_callback(struct sfe_connection_sync *sis)
  *
  * @return sfe_tx_status_t The status of the Tx operation
  */
-static sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv4_msg *msg)
+sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv4_msg *msg)
 {
-	struct sfe_connection_create sic;
 	struct net_device *src_dev = NULL;
 	struct net_device *dest_dev = NULL;
 	struct sfe_response_msg *response;
-	enum sfe_cmn_response ret;
+	enum sfe_cmn_response ret = SFE_TX_SUCCESS;
 
 	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV4, msg);
 	if (!response) {
@@ -461,23 +462,7 @@ static sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal
 		goto failed_ret;
 	}
 
-	/*
-	 * Not support bridged flows now
-	 */
-	if (msg->msg.rule_create.rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
-		ret = SFE_CMN_RESPONSE_EINTERFACE;
-		sfe_incr_exceptions(SFE_EXCEPTION_NOT_SUPPORT_BRIDGE);
-		goto failed_ret;
-	}
-
-	sic.protocol = msg->msg.rule_create.tuple.protocol;
-	sic.src_ip.ip = msg->msg.rule_create.tuple.flow_ip;
-	sic.dest_ip.ip = msg->msg.rule_create.tuple.return_ip;
-	sic.src_ip_xlate.ip = msg->msg.rule_create.conn_rule.flow_ip_xlate;
-	sic.dest_ip_xlate.ip = msg->msg.rule_create.conn_rule.return_ip_xlate;
-
-	sic.flags = 0;
-	switch (sic.protocol) {
+	switch (msg->msg.rule_create.tuple.protocol) {
 	case IPPROTO_TCP:
 		if (!(msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_TCP_VALID)) {
 			ret = SFE_CMN_RESPONSE_EMSG;
@@ -485,28 +470,7 @@ static sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal
 			goto failed_ret;
 		}
 
-		sic.src_port = msg->msg.rule_create.tuple.flow_ident;
-		sic.dest_port = msg->msg.rule_create.tuple.return_ident;
-		sic.src_port_xlate = msg->msg.rule_create.conn_rule.flow_ident_xlate;
-		sic.dest_port_xlate = msg->msg.rule_create.conn_rule.return_ident_xlate;
-		sic.src_td_window_scale = msg->msg.rule_create.tcp_rule.flow_window_scale;
-		sic.src_td_max_window = msg->msg.rule_create.tcp_rule.flow_max_window;
-		sic.src_td_end = msg->msg.rule_create.tcp_rule.flow_end;
-		sic.src_td_max_end = msg->msg.rule_create.tcp_rule.flow_max_end;
-		sic.dest_td_window_scale = msg->msg.rule_create.tcp_rule.return_window_scale;
-		sic.dest_td_max_window = msg->msg.rule_create.tcp_rule.return_max_window;
-		sic.dest_td_end = msg->msg.rule_create.tcp_rule.return_end;
-		sic.dest_td_max_end = msg->msg.rule_create.tcp_rule.return_max_end;
-		if (msg->msg.rule_create.rule_flags & SFE_RULE_CREATE_FLAG_NO_SEQ_CHECK) {
-			sic.flags |= SFE_CREATE_FLAG_NO_SEQ_CHECK;
-		}
-		break;
-
 	case IPPROTO_UDP:
-		sic.src_port = msg->msg.rule_create.tuple.flow_ident;
-		sic.dest_port = msg->msg.rule_create.tuple.return_ident;
-		sic.src_port_xlate = msg->msg.rule_create.conn_rule.flow_ident_xlate;
-		sic.dest_port_xlate = msg->msg.rule_create.conn_rule.return_ident_xlate;
 		break;
 
 	default:
@@ -515,10 +479,14 @@ static sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal
 		goto failed_ret;
 	}
 
-	memcpy(sic.src_mac, msg->msg.rule_create.conn_rule.flow_mac, ETH_ALEN);
-	memset(sic.src_mac_xlate, 0, ETH_ALEN);
-	memset(sic.dest_mac, 0, ETH_ALEN);
-	memcpy(sic.dest_mac_xlate, msg->msg.rule_create.conn_rule.return_mac, ETH_ALEN);
+	/*
+	 * Not supporting bridged flows now
+	 */
+	if (msg->msg.rule_create.rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
+		ret = SFE_CMN_RESPONSE_EINTERFACE;
+		sfe_incr_exceptions(SFE_EXCEPTION_NOT_SUPPORT_BRIDGE);
+		goto failed_ret;
+	}
 
 	/*
 	 * Does our input device support IP processing?
@@ -540,35 +508,8 @@ static sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal
 		goto failed_ret;
 	}
 
-	sic.src_dev = src_dev;
-	sic.dest_dev = dest_dev;
-
-	sic.src_mtu = msg->msg.rule_create.conn_rule.flow_mtu;
-	sic.dest_mtu = msg->msg.rule_create.conn_rule.return_mtu;
-
-	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_QOS_VALID) {
-		sic.src_priority = msg->msg.rule_create.qos_rule.flow_qos_tag;
-		sic.dest_priority = msg->msg.rule_create.qos_rule.return_qos_tag;
-		sic.flags |= SFE_CREATE_FLAG_REMARK_PRIORITY;
-	}
-
-	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_DSCP_MARKING_VALID) {
-		sic.src_dscp = msg->msg.rule_create.dscp_rule.flow_dscp;
-		sic.dest_dscp = msg->msg.rule_create.dscp_rule.return_dscp;
-		sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
-	}
-
-#ifdef CONFIG_XFRM
-	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_DIRECTION_VALID) {
-		sic.original_accel = msg->msg.rule_create.direction_rule.flow_accel;
-		sic.reply_accel = msg->msg.rule_create.direction_rule.return_accel;
-	} else {
-		sic.original_accel = sic.reply_accel = 1;
-	}
-#endif
-
-	if (!sfe_ipv4_create_rule(&sic)) {
-		/* Success */
+	if (!sfe_ipv4_create_rule(&msg->msg.rule_create)) {
+		/* success */
 		ret = SFE_CMN_RESPONSE_ACK;
 	} else {
 		/* Failed */
@@ -606,9 +547,8 @@ failed_ret:
  *
  * @return sfe_tx_status_t The status of the Tx operation
  */
-static sfe_tx_status_t sfe_destroy_ipv4_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv4_msg *msg)
+sfe_tx_status_t sfe_destroy_ipv4_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv4_msg *msg)
 {
-	struct sfe_connection_destroy sid;
 	struct sfe_response_msg *response;
 
 	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV4, msg);
@@ -617,13 +557,7 @@ static sfe_tx_status_t sfe_destroy_ipv4_rule_msg(struct sfe_ctx_instance_interna
 		return SFE_TX_FAILURE_QUEUE;
 	}
 
-	sid.protocol = msg->msg.rule_destroy.tuple.protocol;
-	sid.src_ip.ip = msg->msg.rule_destroy.tuple.flow_ip;
-	sid.dest_ip.ip = msg->msg.rule_destroy.tuple.return_ip;
-	sid.src_port = msg->msg.rule_destroy.tuple.flow_ident;
-	sid.dest_port = msg->msg.rule_destroy.tuple.return_ident;
-
-	sfe_ipv4_destroy_rule(&sid);
+	sfe_ipv4_destroy_rule(&msg->msg.rule_destroy);
 
 	/*
 	 * Try to queue response message
@@ -830,13 +764,12 @@ static void sfe_ipv6_stats_sync_callback(struct sfe_connection_sync *sis)
  *
  * @return sfe_tx_status_t The status of the Tx operation
  */
-static sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv6_msg *msg)
+sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv6_msg *msg)
 {
-	struct sfe_connection_create sic;
 	struct net_device *src_dev = NULL;
 	struct net_device *dest_dev = NULL;
 	struct sfe_response_msg *response;
-	enum sfe_cmn_response ret;
+	enum sfe_cmn_response ret = SFE_TX_SUCCESS;
 
 	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV6, msg);
 	if (!response) {
@@ -851,7 +784,7 @@ static sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal
 	}
 
 	/*
-	 * Not support bridged flows now
+	 * Not supporting bridged flows now
 	 */
 	if (msg->msg.rule_create.rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
 		ret = SFE_CMN_RESPONSE_EINTERFACE;
@@ -859,14 +792,8 @@ static sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal
 		goto failed_ret;
 	}
 
-	sic.protocol = msg->msg.rule_create.tuple.protocol;
-	sfe_ipv6_addr_copy(msg->msg.rule_create.tuple.flow_ip, sic.src_ip.ip6);
-	sfe_ipv6_addr_copy(msg->msg.rule_create.tuple.return_ip, sic.dest_ip.ip6);
-	sfe_ipv6_addr_copy(msg->msg.rule_create.tuple.flow_ip, sic.src_ip_xlate.ip6);
-	sfe_ipv6_addr_copy(msg->msg.rule_create.tuple.return_ip, sic.dest_ip_xlate.ip6);
+	switch(msg->msg.rule_create.tuple.protocol) {
 
-	sic.flags = 0;
-	switch (sic.protocol) {
 	case IPPROTO_TCP:
 		if (!(msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_TCP_VALID)) {
 			ret = SFE_CMN_RESPONSE_EMSG;
@@ -874,28 +801,9 @@ static sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal
 			goto failed_ret;
 		}
 
-		sic.src_port = msg->msg.rule_create.tuple.flow_ident;
-		sic.dest_port = msg->msg.rule_create.tuple.return_ident;
-		sic.src_port_xlate = msg->msg.rule_create.tuple.flow_ident;
-		sic.dest_port_xlate = msg->msg.rule_create.tuple.return_ident;
-		sic.src_td_window_scale = msg->msg.rule_create.tcp_rule.flow_window_scale;
-		sic.src_td_max_window = msg->msg.rule_create.tcp_rule.flow_max_window;
-		sic.src_td_end = msg->msg.rule_create.tcp_rule.flow_end;
-		sic.src_td_max_end = msg->msg.rule_create.tcp_rule.flow_max_end;
-		sic.dest_td_window_scale = msg->msg.rule_create.tcp_rule.return_window_scale;
-		sic.dest_td_max_window = msg->msg.rule_create.tcp_rule.return_max_window;
-		sic.dest_td_end = msg->msg.rule_create.tcp_rule.return_end;
-		sic.dest_td_max_end = msg->msg.rule_create.tcp_rule.return_max_end;
-		if (msg->msg.rule_create.rule_flags & SFE_RULE_CREATE_FLAG_NO_SEQ_CHECK) {
-			sic.flags |= SFE_CREATE_FLAG_NO_SEQ_CHECK;
-		}
 		break;
 
 	case IPPROTO_UDP:
-		sic.src_port = msg->msg.rule_create.tuple.flow_ident;
-		sic.dest_port = msg->msg.rule_create.tuple.return_ident;
-		sic.src_port_xlate = msg->msg.rule_create.tuple.flow_ident;
-		sic.dest_port_xlate = msg->msg.rule_create.tuple.return_ident;
 		break;
 
 	default:
@@ -904,10 +812,6 @@ static sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal
 		goto failed_ret;
 	}
 
-	memcpy(sic.src_mac, msg->msg.rule_create.conn_rule.flow_mac, ETH_ALEN);
-	memset(sic.src_mac_xlate, 0, ETH_ALEN);
-	memset(sic.dest_mac, 0, ETH_ALEN);
-	memcpy(sic.dest_mac_xlate, msg->msg.rule_create.conn_rule.return_mac, ETH_ALEN);
 	/*
 	 * Does our input device support IP processing?
 	 */
@@ -928,35 +832,8 @@ static sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal
 		goto failed_ret;
 	}
 
-	sic.src_dev = src_dev;
-	sic.dest_dev = dest_dev;
-
-	sic.src_mtu = msg->msg.rule_create.conn_rule.flow_mtu;
-	sic.dest_mtu = msg->msg.rule_create.conn_rule.return_mtu;
-
-	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_QOS_VALID) {
-		sic.src_priority = msg->msg.rule_create.qos_rule.flow_qos_tag;
-		sic.dest_priority = msg->msg.rule_create.qos_rule.return_qos_tag;
-		sic.flags |= SFE_CREATE_FLAG_REMARK_PRIORITY;
-	}
-
-	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_DSCP_MARKING_VALID) {
-		sic.src_dscp = msg->msg.rule_create.dscp_rule.flow_dscp;
-		sic.dest_dscp = msg->msg.rule_create.dscp_rule.return_dscp;
-		sic.flags |= SFE_CREATE_FLAG_REMARK_DSCP;
-	}
-
-#ifdef CONFIG_XFRM
-	if (msg->msg.rule_create.valid_flags & SFE_RULE_CREATE_DIRECTION_VALID) {
-		sic.original_accel = msg->msg.rule_create.direction_rule.flow_accel;
-		sic.reply_accel = msg->msg.rule_create.direction_rule.return_accel;
-	} else {
-		sic.original_accel = sic.reply_accel = 1;
-	}
-#endif
-
-	if (!sfe_ipv6_create_rule(&sic)) {
-		/* Success */
+	if (!sfe_ipv6_create_rule(&msg->msg.rule_create)) {
+		/* success */
 		ret = SFE_CMN_RESPONSE_ACK;
 	} else {
 		/* Failed */
@@ -994,9 +871,8 @@ failed_ret:
  *
  * @return sfe_tx_status_t The status of the Tx operation
  */
-static sfe_tx_status_t sfe_destroy_ipv6_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv6_msg *msg)
+sfe_tx_status_t sfe_destroy_ipv6_rule_msg(struct sfe_ctx_instance_internal *sfe_ctx, struct sfe_ipv6_msg *msg)
 {
-	struct sfe_connection_destroy sid;
 	struct sfe_response_msg *response;
 
 	response = sfe_alloc_response_msg(SFE_MSG_TYPE_IPV6, msg);
@@ -1005,13 +881,7 @@ static sfe_tx_status_t sfe_destroy_ipv6_rule_msg(struct sfe_ctx_instance_interna
 		return SFE_TX_FAILURE_QUEUE;
 	}
 
-	sid.protocol = msg->msg.rule_destroy.tuple.protocol;
-	sfe_ipv6_addr_copy(msg->msg.rule_destroy.tuple.flow_ip, sid.src_ip.ip6);
-	sfe_ipv6_addr_copy(msg->msg.rule_destroy.tuple.return_ip, sid.dest_ip.ip6);
-	sid.src_port = msg->msg.rule_destroy.tuple.flow_ident;
-	sid.dest_port = msg->msg.rule_destroy.tuple.return_ident;
-
-	sfe_ipv6_destroy_rule(&sid);
+	sfe_ipv6_destroy_rule(&msg->msg.rule_destroy);
 
 	/*
 	 * Try to queue response message

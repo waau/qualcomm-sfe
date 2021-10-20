@@ -27,9 +27,12 @@
 #include <linux/version.h>
 
 #include "sfe_debug.h"
+#include "sfe_api.h"
 #include "sfe.h"
 #include "sfe_flow_cookie.h"
 #include "sfe_ipv6.h"
+
+#define sfe_ipv6_addr_copy(src, dest) memcpy((void *)(dest), (void *)(src), 16)
 
 static char *sfe_ipv6_exception_events_string[SFE_IPV6_EXCEPTION_EVENT_LAST] = {
 	"UDP_HEADER_INCOMPLETE",
@@ -305,6 +308,7 @@ static void sfe_ipv6_update_summary_stats(struct sfe_ipv6 *si, struct sfe_ipv6_s
 
 		stats->connection_create_requests64 += s->connection_create_requests64;
 		stats->connection_create_collisions64 += s->connection_create_collisions64;
+		stats->connection_create_failures64 += s->connection_create_failures64;
 		stats->connection_destroy_requests64 += s->connection_destroy_requests64;
 		stats->connection_destroy_misses64 += s->connection_destroy_misses64;
 		stats->connection_match_hash_hits64 += s->connection_match_hash_hits64;
@@ -1931,7 +1935,7 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb)
  */
 static void
 sfe_ipv6_update_tcp_state(struct sfe_ipv6_connection *c,
-			  struct sfe_connection_create *sic)
+			  struct sfe_ipv6_rule_create_msg *msg)
 {
 	struct sfe_ipv6_connection_match *orig_cm;
 	struct sfe_ipv6_connection_match *repl_cm;
@@ -1944,31 +1948,31 @@ sfe_ipv6_update_tcp_state(struct sfe_ipv6_connection *c,
 	repl_tcp = &repl_cm->protocol_state.tcp;
 
 	/* update orig */
-	if (orig_tcp->max_win < sic->src_td_max_window) {
-		orig_tcp->max_win = sic->src_td_max_window;
+	if (orig_tcp->max_win < msg->tcp_rule.flow_max_window) {
+		orig_tcp->max_win = msg->tcp_rule.flow_max_window;
 	}
-	if ((s32)(orig_tcp->end - sic->src_td_end) < 0) {
-		orig_tcp->end = sic->src_td_end;
+	if ((s32)(orig_tcp->end - msg->tcp_rule.flow_end) < 0) {
+		orig_tcp->end = msg->tcp_rule.flow_end;
 	}
-	if ((s32)(orig_tcp->max_end - sic->src_td_max_end) < 0) {
-		orig_tcp->max_end = sic->src_td_max_end;
+	if ((s32)(orig_tcp->max_end - msg->tcp_rule.flow_max_end) < 0) {
+		orig_tcp->max_end = msg->tcp_rule.flow_max_end;
 	}
 
 	/* update reply */
-	if (repl_tcp->max_win < sic->dest_td_max_window) {
-		repl_tcp->max_win = sic->dest_td_max_window;
+	if (repl_tcp->max_win < msg->tcp_rule.return_max_window) {
+		repl_tcp->max_win = msg->tcp_rule.return_max_window;
 	}
-	if ((s32)(repl_tcp->end - sic->dest_td_end) < 0) {
-		repl_tcp->end = sic->dest_td_end;
+	if ((s32)(repl_tcp->end - msg->tcp_rule.return_end) < 0) {
+		repl_tcp->end = msg->tcp_rule.return_end;
 	}
-	if ((s32)(repl_tcp->max_end - sic->dest_td_max_end) < 0) {
-		repl_tcp->max_end = sic->dest_td_max_end;
+	if ((s32)(repl_tcp->max_end - msg->tcp_rule.return_max_end) < 0) {
+		repl_tcp->max_end = msg->tcp_rule.return_max_end;
 	}
 
 	/* update match flags */
 	orig_cm->flags &= ~SFE_IPV6_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 	repl_cm->flags &= ~SFE_IPV6_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
-	if (sic->flags & SFE_CREATE_FLAG_NO_SEQ_CHECK) {
+	if (msg->rule_flags & SFE_RULE_CREATE_FLAG_NO_SEQ_CHECK) {
 		orig_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 		repl_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 	}
@@ -1980,11 +1984,11 @@ sfe_ipv6_update_tcp_state(struct sfe_ipv6_connection *c,
  */
 static void
 sfe_ipv6_update_protocol_state(struct sfe_ipv6_connection *c,
-			       struct sfe_connection_create *sic)
+			       struct sfe_ipv6_rule_create_msg *msg)
 {
-	switch (sic->protocol) {
+	switch (msg->tuple.protocol) {
 	case IPPROTO_TCP:
-		sfe_ipv6_update_tcp_state(c, sic);
+		sfe_ipv6_update_tcp_state(c, msg);
 		break;
 	}
 }
@@ -1993,7 +1997,8 @@ sfe_ipv6_update_protocol_state(struct sfe_ipv6_connection *c,
  * sfe_ipv6_update_rule()
  *	update forwarding rule after rule is created.
  */
-void sfe_ipv6_update_rule(struct sfe_connection_create *sic)
+void sfe_ipv6_update_rule(struct sfe_ipv6_rule_create_msg *msg)
+
 {
 	struct sfe_ipv6_connection *c;
 	struct sfe_ipv6 *si = &__si6;
@@ -2001,13 +2006,13 @@ void sfe_ipv6_update_rule(struct sfe_connection_create *sic)
 	spin_lock_bh(&si->lock);
 
 	c = sfe_ipv6_find_connection(si,
-				     sic->protocol,
-				     sic->src_ip.ip6,
-				     sic->src_port,
-				     sic->dest_ip.ip6,
-				     sic->dest_port);
+				     msg->tuple.protocol,
+				     (struct sfe_ipv6_addr *)msg->tuple.flow_ip,
+				     msg->tuple.flow_ident,
+				     (struct sfe_ipv6_addr *)msg->tuple.return_ip,
+				     msg->tuple.return_ident);
 	if (c != NULL) {
-		sfe_ipv6_update_protocol_state(c, sic);
+		sfe_ipv6_update_protocol_state(c, msg);
 	}
 
 	spin_unlock_bh(&si->lock);
@@ -2017,7 +2022,7 @@ void sfe_ipv6_update_rule(struct sfe_connection_create *sic)
  * sfe_ipv6_create_rule()
  *	Create a forwarding rule.
  */
-int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
+int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 {
 	struct sfe_ipv6 *si = &__si6;
 	struct sfe_ipv6_connection *c, *old_c;
@@ -2025,12 +2030,32 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	struct sfe_ipv6_connection_match *reply_cm;
 	struct net_device *dest_dev;
 	struct net_device *src_dev;
+	struct sfe_ipv6_5tuple *tuple = &msg->tuple;
 
-	dest_dev = sic->dest_dev;
-	src_dev = sic->src_dev;
+	src_dev = dev_get_by_index(&init_net, msg->conn_rule.flow_top_interface_num);
+	if (!src_dev) {
+		DEBUG_WARN("%px: Unable to find src_dev corresponding to %d\n", msg,
+						msg->conn_rule.flow_top_interface_num);
+		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
+		return -EINVAL;
+	}
+
+	dest_dev = dev_get_by_index(&init_net, msg->conn_rule.return_top_interface_num);
+	if (!dest_dev) {
+		DEBUG_WARN("%px: Unable to find dest_dev corresponding to %d\n", msg,
+						msg->conn_rule.return_top_interface_num);
+		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
+		dev_put(src_dev);
+		return -EINVAL;
+	}
 
 	if (unlikely((dest_dev->reg_state != NETREG_REGISTERED) ||
 		     (src_dev->reg_state != NETREG_REGISTERED))) {
+		DEBUG_WARN("%px: src_dev=%s and dest_dev=%s are unregistered\n", msg,
+						src_dev->name, dest_dev->name);
+		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
+		dev_put(src_dev);
+		dev_put(dest_dev);
 		return -EINVAL;
 	}
 
@@ -2039,19 +2064,31 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	 */
 	c = (struct sfe_ipv6_connection *)kmalloc(sizeof(struct sfe_ipv6_connection), GFP_ATOMIC);
 	if (unlikely(!c)) {
+		DEBUG_WARN("%px: memory allocation of connection entry failed\n", msg);
+		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
+		dev_put(src_dev);
+		dev_put(dest_dev);
 		return -ENOMEM;
 	}
 
 	original_cm = (struct sfe_ipv6_connection_match *)kmalloc(sizeof(struct sfe_ipv6_connection_match), GFP_ATOMIC);
 	if (unlikely(!original_cm)) {
+		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
+		DEBUG_WARN("%px: memory allocation of connection match entry failed\n", msg);
 		kfree(c);
+		dev_put(src_dev);
+		dev_put(dest_dev);
 		return -ENOMEM;
 	}
 
 	reply_cm = (struct sfe_ipv6_connection_match *)kmalloc(sizeof(struct sfe_ipv6_connection_match), GFP_ATOMIC);
 	if (unlikely(!reply_cm)) {
+		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
+		DEBUG_WARN("%px: memory allocation of connection match entry failed\n", msg);
 		kfree(original_cm);
 		kfree(c);
+		dev_put(src_dev);
+		dev_put(dest_dev);
 		return -ENOMEM;
 	}
 
@@ -2063,12 +2100,9 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	 * Check to see if there is already a flow that matches the rule we're
 	 * trying to create.  If there is then we can't create a new one.
 	 */
-	old_c = sfe_ipv6_find_connection(si,
-				     sic->protocol,
-				     sic->src_ip.ip6,
-				     sic->src_port,
-				     sic->dest_ip.ip6,
-				     sic->dest_port);
+	old_c = sfe_ipv6_find_connection(si, tuple->protocol, (struct sfe_ipv6_addr *)tuple->flow_ip, tuple->flow_ident,
+					 (struct sfe_ipv6_addr *)tuple->return_ip, tuple->return_ident);
+
 	if (old_c != NULL) {
 		this_cpu_inc(si->stats_pcpu->connection_create_collisions64);
 
@@ -2077,18 +2111,20 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 		 * request to create the connection rule contains more
 		 * up-to-date information. Check and update accordingly.
 		 */
-		sfe_ipv6_update_protocol_state(old_c, sic);
+		sfe_ipv6_update_protocol_state(old_c, msg);
 		spin_unlock_bh(&si->lock);
 
 		kfree(reply_cm);
 		kfree(original_cm);
 		kfree(c);
+		dev_put(src_dev);
+		dev_put(dest_dev);
 
-		DEBUG_TRACE("connection already exists - mark: %08x, p: %d\n"
+		DEBUG_TRACE("connection already exists -  p: %d\n"
 			    "  s: %s:%pxM:%pI6:%u, d: %s:%pxM:%pI6:%u\n",
-			    sic->mark, sic->protocol,
-			    sic->src_dev->name, sic->src_mac, sic->src_ip.ip6, ntohs(sic->src_port),
-			    sic->dest_dev->name, sic->dest_mac, sic->dest_ip.ip6, ntohs(sic->dest_port));
+			    tuple->protocol,
+			    src_dev->name, msg->conn_rule.flow_mac, tuple->flow_ip, ntohs(tuple->flow_ident),
+			   dest_dev->name, msg->conn_rule.return_mac, tuple->return_ip, ntohs(tuple->return_ident));
 		return -EADDRINUSE;
 	}
 
@@ -2099,39 +2135,46 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	 * addresses and not their public addresses.
 	 */
 	original_cm->match_dev = src_dev;
-	original_cm->match_protocol = sic->protocol;
-	original_cm->match_src_ip[0] = sic->src_ip.ip6[0];
-	original_cm->match_src_port = sic->src_port;
-	original_cm->match_dest_ip[0] = sic->dest_ip.ip6[0];
-	original_cm->match_dest_port = sic->dest_port;
-	original_cm->xlate_src_ip[0] = sic->src_ip_xlate.ip6[0];
-	original_cm->xlate_src_port = sic->src_port_xlate;
-	original_cm->xlate_dest_ip[0] = sic->dest_ip_xlate.ip6[0];
-	original_cm->xlate_dest_port = sic->dest_port_xlate;
+	original_cm->match_protocol = tuple->protocol;
+	original_cm->match_src_ip[0] = *(struct sfe_ipv6_addr *)tuple->flow_ip;
+	original_cm->match_src_port = tuple->flow_ident;
+	original_cm->match_dest_ip[0] = *(struct sfe_ipv6_addr *)tuple->return_ip;
+	original_cm->match_dest_port = tuple->return_ident;
+
+	original_cm->xlate_src_ip[0] = *(struct sfe_ipv6_addr *)tuple->flow_ip;
+	original_cm->xlate_src_port = tuple->flow_ident;
+	original_cm->xlate_dest_ip[0] = *(struct sfe_ipv6_addr *)tuple->return_ip;
+	original_cm->xlate_dest_port =  tuple->return_ident;
+
 	atomic_set(&original_cm->rx_packet_count, 0);
 	original_cm->rx_packet_count64 = 0;
 	atomic_set(&original_cm->rx_byte_count, 0);
 	original_cm->rx_byte_count64 = 0;
 	original_cm->xmit_dev = dest_dev;
-	original_cm->xmit_dev_mtu = sic->dest_mtu;
+
+	original_cm->xmit_dev_mtu = msg->conn_rule.return_mtu;
 	memcpy(original_cm->xmit_src_mac, dest_dev->dev_addr, ETH_ALEN);
-	memcpy(original_cm->xmit_dest_mac, sic->dest_mac_xlate, ETH_ALEN);
+	memcpy(original_cm->xmit_dest_mac, msg->conn_rule.return_mac, ETH_ALEN);
 	original_cm->connection = c;
 	original_cm->counter_match = reply_cm;
 	original_cm->flags = 0;
-	if (sic->flags & SFE_CREATE_FLAG_REMARK_PRIORITY) {
-		original_cm->priority = sic->src_priority;
+	if (msg->valid_flags & SFE_RULE_CREATE_QOS_VALID) {
+		original_cm->priority = msg->qos_rule.flow_qos_tag;
 		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
 	}
-	if (sic->flags & SFE_CREATE_FLAG_REMARK_DSCP) {
-		original_cm->dscp = sic->src_dscp << SFE_IPV6_DSCP_SHIFT;
+	if (msg->valid_flags & SFE_RULE_CREATE_DSCP_MARKING_VALID) {
+		original_cm->dscp = msg->dscp_rule.flow_dscp << SFE_IPV6_DSCP_SHIFT;
 		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 	}
 #ifdef CONFIG_NF_FLOW_COOKIE
 	original_cm->flow_cookie = 0;
 #endif
 #ifdef CONFIG_XFRM
-	original_cm->flow_accel = sic->original_accel;
+	if (msg->valid_flags & SFE_RULE_CREATE_DIRECTION_VALID) {
+		original_cm->flow_accel = msg->direction_rule.flow_accel;
+	} else {
+		original_cm->flow_accel = 1;
+	}
 #endif
 	original_cm->active_next = NULL;
 	original_cm->active_prev = NULL;
@@ -2145,7 +2188,7 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 
 		/*
 		 * If our dev writes Ethernet headers then we can write a really fast
-		 * version.
+		 * version
 		 */
 		if (dest_dev->header_ops) {
 			if (dest_dev->header_ops->create == eth_header) {
@@ -2158,39 +2201,44 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	 * Fill in the "reply" direction connection matching object.
 	 */
 	reply_cm->match_dev = dest_dev;
-	reply_cm->match_protocol = sic->protocol;
-	reply_cm->match_src_ip[0] = sic->dest_ip_xlate.ip6[0];
-	reply_cm->match_src_port = sic->dest_port_xlate;
-	reply_cm->match_dest_ip[0] = sic->src_ip_xlate.ip6[0];
-	reply_cm->match_dest_port = sic->src_port_xlate;
-	reply_cm->xlate_src_ip[0] = sic->dest_ip.ip6[0];
-	reply_cm->xlate_src_port = sic->dest_port;
-	reply_cm->xlate_dest_ip[0] = sic->src_ip.ip6[0];
-	reply_cm->xlate_dest_port = sic->src_port;
+	reply_cm->match_protocol = tuple->protocol;
+	reply_cm->match_src_ip[0] = *(struct sfe_ipv6_addr *)tuple->return_ip;
+	reply_cm->match_src_port = tuple->return_ident;
+	reply_cm->match_dest_ip[0] = *(struct sfe_ipv6_addr *)tuple->flow_ip;
+	reply_cm->match_dest_port = tuple->flow_ident;
+	reply_cm->xlate_src_ip[0] = *(struct sfe_ipv6_addr *)tuple->return_ip;
+	reply_cm->xlate_src_port = tuple->return_ident;
+	reply_cm->xlate_dest_ip[0] = *(struct sfe_ipv6_addr *)tuple->flow_ip;
+	reply_cm->xlate_dest_port = tuple->flow_ident;
+
 	atomic_set(&original_cm->rx_byte_count, 0);
 	reply_cm->rx_packet_count64 = 0;
 	atomic_set(&reply_cm->rx_byte_count, 0);
 	reply_cm->rx_byte_count64 = 0;
 	reply_cm->xmit_dev = src_dev;
-	reply_cm->xmit_dev_mtu = sic->src_mtu;
+	reply_cm->xmit_dev_mtu = msg->conn_rule.flow_mtu;
 	memcpy(reply_cm->xmit_src_mac, src_dev->dev_addr, ETH_ALEN);
-	memcpy(reply_cm->xmit_dest_mac, sic->src_mac, ETH_ALEN);
+	memcpy(reply_cm->xmit_dest_mac, msg->conn_rule.flow_mac, ETH_ALEN);
 	reply_cm->connection = c;
 	reply_cm->counter_match = original_cm;
 	reply_cm->flags = 0;
-	if (sic->flags & SFE_CREATE_FLAG_REMARK_PRIORITY) {
-		reply_cm->priority = sic->dest_priority;
+	if (msg->valid_flags & SFE_RULE_CREATE_QOS_VALID) {
+		reply_cm->priority = msg->qos_rule.return_qos_tag;
 		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
 	}
-	if (sic->flags & SFE_CREATE_FLAG_REMARK_DSCP) {
-		reply_cm->dscp = sic->dest_dscp << SFE_IPV6_DSCP_SHIFT;
+	if (msg->valid_flags & SFE_RULE_CREATE_DSCP_MARKING_VALID) {
+		reply_cm->dscp = msg->dscp_rule.return_dscp << SFE_IPV6_DSCP_SHIFT;
 		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 	}
 #ifdef CONFIG_NF_FLOW_COOKIE
 	reply_cm->flow_cookie = 0;
 #endif
 #ifdef CONFIG_XFRM
-	reply_cm->flow_accel = sic->reply_accel;
+	if (msg->valid_flags & SFE_RULE_CREATE_DIRECTION_VALID) {
+		reply_cm->flow_accel = msg->direction_rule.return_accel;
+	} else {
+		reply_cm->flow_accel = 1;
+	}
 #endif
 	reply_cm->active_next = NULL;
 	reply_cm->active_prev = NULL;
@@ -2213,54 +2261,44 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 		}
 	}
 
-	if (!sfe_ipv6_addr_equal(sic->dest_ip.ip6, sic->dest_ip_xlate.ip6) || sic->dest_port != sic->dest_port_xlate) {
-		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_XLATE_DEST;
-		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_XLATE_SRC;
-	}
+	/*
+	 * No support for NAT in ipv6
+	 */
 
-	if (!sfe_ipv6_addr_equal(sic->src_ip.ip6, sic->src_ip_xlate.ip6) || sic->src_port != sic->src_port_xlate) {
-		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_XLATE_SRC;
-		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_XLATE_DEST;
-	}
-
-	c->protocol = sic->protocol;
-	c->src_ip[0] = sic->src_ip.ip6[0];
-	c->src_ip_xlate[0] = sic->src_ip_xlate.ip6[0];
-	c->src_port = sic->src_port;
-	c->src_port_xlate = sic->src_port_xlate;
+	c->protocol = tuple->protocol;
+	c->src_ip[0] = *(struct sfe_ipv6_addr *)tuple->flow_ip;
+	c->src_ip_xlate[0] = *(struct sfe_ipv6_addr *)tuple->flow_ip;
+	c->src_port = tuple->flow_ident;
+	c->src_port_xlate = tuple->flow_ident;
 	c->original_dev = src_dev;
 	c->original_match = original_cm;
-	c->dest_ip[0] = sic->dest_ip.ip6[0];
-	c->dest_ip_xlate[0] = sic->dest_ip_xlate.ip6[0];
-	c->dest_port = sic->dest_port;
-	c->dest_port_xlate = sic->dest_port_xlate;
+
+	c->dest_ip[0] = *(struct sfe_ipv6_addr *)tuple->return_ip;
+	c->dest_ip_xlate[0] = *(struct sfe_ipv6_addr *)tuple->return_ip;
+	c->dest_port = tuple->return_ident;
+	c->dest_port_xlate = tuple->return_ident;
+
 	c->reply_dev = dest_dev;
 	c->reply_match = reply_cm;
-	c->mark = sic->mark;
+	c->mark = 0; /* No mark support */
 	c->debug_read_seq = 0;
 	c->last_sync_jiffies = get_jiffies_64();
 	c->removed = false;
 
 	/*
-	 * Take hold of our source and dest devices for the duration of the connection.
-	 */
-	dev_hold(c->original_dev);
-	dev_hold(c->reply_dev);
-
-	/*
 	 * Initialize the protocol-specific information that we track.
 	 */
-	switch (sic->protocol) {
+	switch (tuple->protocol) {
 	case IPPROTO_TCP:
-		original_cm->protocol_state.tcp.win_scale = sic->src_td_window_scale;
-		original_cm->protocol_state.tcp.max_win = sic->src_td_max_window ? sic->src_td_max_window : 1;
-		original_cm->protocol_state.tcp.end = sic->src_td_end;
-		original_cm->protocol_state.tcp.max_end = sic->src_td_max_end;
-		reply_cm->protocol_state.tcp.win_scale = sic->dest_td_window_scale;
-		reply_cm->protocol_state.tcp.max_win = sic->dest_td_max_window ? sic->dest_td_max_window : 1;
-		reply_cm->protocol_state.tcp.end = sic->dest_td_end;
-		reply_cm->protocol_state.tcp.max_end = sic->dest_td_max_end;
-		if (sic->flags & SFE_CREATE_FLAG_NO_SEQ_CHECK) {
+		original_cm->protocol_state.tcp.win_scale = msg->tcp_rule.flow_window_scale;
+		original_cm->protocol_state.tcp.max_win = msg->tcp_rule.flow_max_window ? msg->tcp_rule.flow_max_window : 1;
+		original_cm->protocol_state.tcp.end = msg->tcp_rule.flow_end;
+		original_cm->protocol_state.tcp.max_end = msg->tcp_rule.flow_max_end;
+		reply_cm->protocol_state.tcp.win_scale = msg->tcp_rule.return_window_scale;
+		reply_cm->protocol_state.tcp.max_win = msg->tcp_rule.return_max_window ? msg->tcp_rule.return_max_window : 1;
+		reply_cm->protocol_state.tcp.end = msg->tcp_rule.return_end;
+		reply_cm->protocol_state.tcp.max_end = msg->tcp_rule.return_max_end;
+		if (msg->rule_flags & SFE_RULE_CREATE_FLAG_NO_SEQ_CHECK) {
 			original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 			reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK;
 		}
@@ -2276,14 +2314,14 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
 	/*
 	 * We have everything we need!
 	 */
-	DEBUG_INFO("new connection - mark: %08x, p: %d\n"
+	DEBUG_INFO("new connection - p: %d\n"
 		   "  s: %s:%pxM(%pxM):%pI6(%pI6):%u(%u)\n"
 		   "  d: %s:%pxM(%pxM):%pI6(%pI6):%u(%u)\n",
-		   sic->mark, sic->protocol,
-		   sic->src_dev->name, sic->src_mac, sic->src_mac_xlate,
-		   sic->src_ip.ip6, sic->src_ip_xlate.ip6, ntohs(sic->src_port), ntohs(sic->src_port_xlate),
-		   dest_dev->name, sic->dest_mac, sic->dest_mac_xlate,
-		   sic->dest_ip.ip6, sic->dest_ip_xlate.ip6, ntohs(sic->dest_port), ntohs(sic->dest_port_xlate));
+		   tuple->protocol,
+		   src_dev->name, msg->conn_rule.flow_mac, NULL,
+		   (void *)tuple->flow_ip, (void *)tuple->flow_ip, ntohs(tuple->flow_ident), ntohs(tuple->flow_ident),
+		   dest_dev->name, NULL, msg->conn_rule.return_mac,
+		   (void *)tuple->return_ip, (void *)tuple->return_ip, ntohs(tuple->return_ident), ntohs(tuple->return_ident));
 
 	return 0;
 }
@@ -2292,11 +2330,12 @@ int sfe_ipv6_create_rule(struct sfe_connection_create *sic)
  * sfe_ipv6_destroy_rule()
  *	Destroy a forwarding rule.
  */
-void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
+void sfe_ipv6_destroy_rule(struct sfe_ipv6_rule_destroy_msg *msg)
 {
 	struct sfe_ipv6 *si = &__si6;
 	struct sfe_ipv6_connection *c;
 	bool ret;
+	struct sfe_ipv6_5tuple *tuple = &msg->tuple;
 
 	this_cpu_inc(si->stats_pcpu->connection_destroy_requests64);
 
@@ -2306,16 +2345,16 @@ void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
 	 * Check to see if we have a flow that matches the rule we're trying
 	 * to destroy.  If there isn't then we can't destroy it.
 	 */
-	c = sfe_ipv6_find_connection(si, sid->protocol, sid->src_ip.ip6, sid->src_port,
-				     sid->dest_ip.ip6, sid->dest_port);
+	c = sfe_ipv6_find_connection(si, tuple->protocol, (struct sfe_ipv6_addr *)tuple->flow_ip, tuple->flow_ident,
+				     (struct sfe_ipv6_addr *)tuple->return_ip, tuple->return_ident);
 	if (!c) {
 		spin_unlock_bh(&si->lock);
 
 		this_cpu_inc(si->stats_pcpu->connection_destroy_misses64);
 
 		DEBUG_TRACE("connection does not exist - p: %d, s: %pI6:%u, d: %pI6:%u\n",
-			    sid->protocol, sid->src_ip.ip6, ntohs(sid->src_port),
-			    sid->dest_ip.ip6, ntohs(sid->dest_port));
+			    tuple->protocol, tuple->flow_ip, ntohs(tuple->flow_ident),
+			    tuple->return_ip, ntohs(tuple->return_ident));
 		return;
 	}
 
@@ -2330,8 +2369,8 @@ void sfe_ipv6_destroy_rule(struct sfe_connection_destroy *sid)
 	}
 
 	DEBUG_INFO("connection destroyed - p: %d, s: %pI6:%u, d: %pI6:%u\n",
-		   sid->protocol, sid->src_ip.ip6, ntohs(sid->src_port),
-		   sid->dest_ip.ip6, ntohs(sid->dest_port));
+		   tuple->protocol, tuple->flow_ip, ntohs(tuple->flow_ident),
+		   tuple->return_ip, ntohs(tuple->return_ident));
 }
 
 /*
@@ -2808,6 +2847,7 @@ static bool sfe_ipv6_debug_dev_read_stats(struct sfe_ipv6 *si, char *buffer, cha
 			      "num_connections=\"%u\" "
 			      "pkts_forwarded=\"%llu\" pkts_not_forwarded=\"%llu\" "
 			      "create_requests=\"%llu\" create_collisions=\"%llu\" "
+			      "create_failures=\"%llu\" "
 			      "destroy_requests=\"%llu\" destroy_misses=\"%llu\" "
 			      "flushes=\"%llu\" "
 			      "hash_hits=\"%llu\" hash_reorders=\"%llu\" />\n",
@@ -2817,6 +2857,7 @@ static bool sfe_ipv6_debug_dev_read_stats(struct sfe_ipv6 *si, char *buffer, cha
 				stats.packets_not_forwarded64,
 				stats.connection_create_requests64,
 				stats.connection_create_collisions64,
+				stats.connection_create_failures64,
 				stats.connection_destroy_requests64,
 				stats.connection_destroy_misses64,
 				stats.connection_flushes64,
@@ -3138,17 +3179,7 @@ void sfe_ipv6_exit(void)
 	kobject_put(si->sys_sfe_ipv6);
 }
 
-EXPORT_SYMBOL(sfe_ipv6_recv);
-EXPORT_SYMBOL(sfe_ipv6_create_rule);
-EXPORT_SYMBOL(sfe_ipv6_destroy_rule);
-EXPORT_SYMBOL(sfe_ipv6_destroy_all_rules_for_dev);
-EXPORT_SYMBOL(sfe_ipv6_register_sync_rule_callback);
-EXPORT_SYMBOL(sfe_ipv6_mark_rule);
-EXPORT_SYMBOL(sfe_ipv6_update_rule);
 #ifdef CONFIG_NF_FLOW_COOKIE
 EXPORT_SYMBOL(sfe_ipv6_register_flow_cookie_cb);
 EXPORT_SYMBOL(sfe_ipv6_unregister_flow_cookie_cb);
 #endif
-
-MODULE_DESCRIPTION("Shortcut Forwarding Engine - IPv6 support");
-MODULE_LICENSE("Dual BSD/GPL");

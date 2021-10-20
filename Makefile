@@ -12,4 +12,4 @@ qca-nss-sfe-objs += \
 ccflags-y += -DSFE_SUPPORT_IPV6
 endif
 
-ccflags-y += -Werror -Wall
+ccflags-y += -Werror -Wall -Iexports/

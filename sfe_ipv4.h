@@ -239,6 +239,8 @@ struct sfe_ipv4_stats {
 					/* Number of IPv4 connection create requests */
 	u64 connection_create_collisions64;
 					/* Number of IPv4 connection create requests that collided with existing hash table entries */
+	u64 connection_create_failures64;
+					/* Number of IPv4 connection create requests that failed */
 	u64 connection_destroy_requests64;
 					/* Number of IPv4 connection destroy requests */
 	u64 connection_destroy_misses64;

@@ -228,6 +228,32 @@ enum sfe_ipv4_exception_events {
 };
 
 /*
+ * per CPU stats
+ */
+struct sfe_ipv4_stats {
+	/*
+	 * Stats recorded in a sync period. These stats will be added to
+	 * connection_xxx64 after a sync period.
+	 */
+	u64 connection_create_requests64;
+					/* Number of IPv4 connection create requests */
+	u64 connection_create_collisions64;
+					/* Number of IPv4 connection create requests that collided with existing hash table entries */
+	u64 connection_destroy_requests64;
+					/* Number of IPv4 connection destroy requests */
+	u64 connection_destroy_misses64;
+					/* Number of IPv4 connection destroy requests that missed our hash table */
+	u64 connection_match_hash_hits64;
+					/* Number of IPv4 connection match hash hits */
+	u64 connection_match_hash_reorders64;
+					/* Number of IPv4 connection match hash reorders */
+	u64 connection_flushes64;		/* Number of IPv4 connection flushes */
+	u64 packets_forwarded64;		/* Number of IPv4 packets forwarded */
+	u64 packets_not_forwarded64;	/* Number of IPv4 packets not forwarded */
+	u64 exception_events64[SFE_IPV4_EXCEPTION_EVENT_LAST];
+};
+
+/*
  * Per-module structure.
  */
 struct sfe_ipv4 {
@@ -259,47 +285,8 @@ struct sfe_ipv4 {
 					/* Enable/disable flow cookie at runtime */
 #endif
 
-	/*
-	 * Stats recorded in a sync period. These stats will be added to
-	 * connection_xxx64 after a sync period.
-	 */
-	u32 connection_create_requests;
-					/* Number of IPv4 connection create requests */
-	u32 connection_create_collisions;
-					/* Number of IPv4 connection create requests that collided with existing hash table entries */
-	u32 connection_destroy_requests;
-					/* Number of IPv4 connection destroy requests */
-	u32 connection_destroy_misses;
-					/* Number of IPv4 connection destroy requests that missed our hash table */
-	u32 connection_match_hash_hits;
-					/* Number of IPv4 connection match hash hits */
-	u32 connection_match_hash_reorders;
-					/* Number of IPv4 connection match hash reorders */
-	u32 connection_flushes;		/* Number of IPv4 connection flushes */
-	u32 packets_forwarded;		/* Number of IPv4 packets forwarded */
-	u32 packets_not_forwarded;	/* Number of IPv4 packets not forwarded */
-	u32 exception_events[SFE_IPV4_EXCEPTION_EVENT_LAST];
-
-	/*
-	 * Summary statistics.
-	 */
-	u64 connection_create_requests64;
-					/* Number of IPv4 connection create requests */
-	u64 connection_create_collisions64;
-					/* Number of IPv4 connection create requests that collided with existing hash table entries */
-	u64 connection_destroy_requests64;
-					/* Number of IPv4 connection destroy requests */
-	u64 connection_destroy_misses64;
-					/* Number of IPv4 connection destroy requests that missed our hash table */
-	u64 connection_match_hash_hits64;
-					/* Number of IPv4 connection match hash hits */
-	u64 connection_match_hash_reorders64;
-					/* Number of IPv4 connection match hash reorders */
-	u64 connection_flushes64;	/* Number of IPv4 connection flushes */
-	u64 packets_forwarded64;	/* Number of IPv4 packets forwarded */
-	u64 packets_not_forwarded64;
-					/* Number of IPv4 packets not forwarded */
-	u64 exception_events64[SFE_IPV4_EXCEPTION_EVENT_LAST];
+	struct sfe_ipv4_stats __percpu *stats_pcpu;
+					/* Per CPU statistics. */
 
 	/*
 	 * Control state.

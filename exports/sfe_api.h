@@ -1,26 +1,28 @@
 /*
- * sfe_drv.h
- *	simulated driver headers for shortcut forwarding engine.
+ * sfe_api.h
+ *	 SFE exported function headers for SFE engine
  *
- * Copyright (c) 2015,2016 The Linux Foundation. All rights reserved.
- * Permission to use, copy, modify, and/or distribute this software for
- * any purpose with or without fee is hereby granted, provided that the
- * above copyright notice and this permission notice appear in all copies.
+ * Copyright (c) 2015,2016, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
  * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
  * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
  * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
  * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
  * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
- * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
- * OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#ifndef __SFE_DRV_H
-#define __SFE_DRV_H
+#ifndef __SFE_API_H
+#define __SFE_API_H
 
-#define MAX_VLAN_DEPTH 2
+#define SFE_MAX_VLAN_DEPTH 2
 #define SFE_VLAN_ID_NOT_CONFIGURED 0xfff
-#define SFE_MC_IF_MAX 16
 
 #define SFE_SPECIAL_INTERFACE_BASE 0x7f00
 #define SFE_SPECIAL_INTERFACE_IPV4 (SFE_SPECIAL_INTERFACE_BASE + 1)
@@ -40,9 +42,7 @@
 #define SFE_RULE_UPDATE_FLAG_CHANGE_MTU   (1<<5) /**< Update MTU of connection interfaces */
 #define SFE_RULE_CREATE_FLAG_ICMP_NO_CME_FLUSH (1<<6)/**< Rule for not flushing CME on ICMP pkt */
 #define SFE_RULE_CREATE_FLAG_L2_ENCAP     (1<<7) /**< consists of an encapsulating protocol that carries an IPv4 payload within it. */
-#define SFE_RULE_CREATE_FLAG_MC_JOIN      (1<<8) /**< Interface has joined the flow */
-#define SFE_RULE_CREATE_FLAG_MC_LEAVE     (1<<9) /**< Interface has left the flow */
-#define SFE_RULE_CREATE_FLAG_MC_UPDATE    (1<<10)/**< Multicast Rule update */
+
 /**
  * Rule creation validity flags.
  */
@@ -53,8 +53,7 @@
 #define SFE_RULE_CREATE_VLAN_VALID         (1<<4) /**< VLAN fields are valid */
 #define SFE_RULE_CREATE_DSCP_MARKING_VALID (1<<5) /**< DSCP marking fields are valid */
 #define SFE_RULE_CREATE_VLAN_MARKING_VALID (1<<6) /**< VLAN marking fields are valid */
-#define SFE_RULE_CREATE_MC_NAT_VALID       (1<<7) /**< Interface is configured with Source-NAT */
-#define SFE_RULE_CREATE_DIRECTION_VALID    (1<<8) /**< specify acceleration directions */
+#define SFE_RULE_CREATE_DIRECTION_VALID    (1<<7) /**< specify acceleration directions */
 
 /*
  * 32/64 bits pointer type
@@ -89,7 +88,7 @@ typedef enum {
 } sfe_tx_status_t;
 
 /**
- * Common response structure
+ * Common response types.
  */
 enum sfe_cmn_response {
 	SFE_CMN_RESPONSE_ACK,		/**< Message Acknowledge */
@@ -108,7 +107,6 @@ enum sfe_message_types {
 	SFE_TX_CREATE_RULE_MSG,		/**< IPv4/6 create rule message */
 	SFE_TX_DESTROY_RULE_MSG,	/**< IPv4/6 destroy rule message */
 	SFE_RX_CONN_STATS_SYNC_MSG,	/**< IPv4/6 connection stats sync message */
-	SFE_TX_CREATE_MC_RULE_MSG,	/**< IPv4/6 multicast create rule message */
 	SFE_TUN6RD_ADD_UPDATE_PEER,	/**< Add/update peer for 6rd tunnel */
 	SFE_MAX_MSG_TYPES,		/**< IPv4/6 message max type number */
 };
@@ -140,19 +138,7 @@ struct sfe_ipv4_5tuple {
 };
 
 /**
- * Common 5 tuple structure
- */
-struct sfe_ipv6_5tuple {
-	__be32 flow_ip[4];		/**< Flow IP address */
-	__be32 return_ip[4];		/**< Return IP address */
-	__be16 flow_ident;		/**< Flow ident (e.g. TCP/UDP port) */
-	__be16 return_ident;		/**< Return ident (e.g. TCP/UDP port) */
-	u8  protocol;		/**< Protocol number */
-	u8  reserved[3];		/**< Padded for alignment */
-};
-
-/**
- * Connection create structure
+ * IPv4 connection rule structure.
  */
 struct sfe_ipv4_connection_rule {
 	u8 flow_mac[6];		/**< Flow MAC address */
@@ -167,20 +153,6 @@ struct sfe_ipv4_connection_rule {
 	__be32 return_ip_xlate;		/**< Translated return IP address */
 	__be16 flow_ident_xlate;	/**< Translated flow ident (e.g. port) */
 	__be16 return_ident_xlate;	/**< Translated return ident (e.g. port) */
-};
-
-/**
- * Connection create structure
- */
-struct sfe_ipv6_connection_rule {
-	u8 flow_mac[6];		/**< Flow MAC address */
-	u8 return_mac[6];		/**< Return MAC address */
-	s32 flow_interface_num;	/**< Flow interface number */
-	s32 return_interface_num;	/**< Return interface number */
-	s32 flow_top_interface_num;	/* Top flow interface number */
-	s32 return_top_interface_num;/* Top return interface number */
-	u32 flow_mtu;		/**< Flow interface's MTU */
-	u32 return_mtu;		/**< Return interface's MTU */
 };
 
 /**
@@ -337,6 +309,32 @@ struct sfe_ipv4_msg {
 typedef void (*sfe_ipv4_msg_callback_t)(void *app_data, struct sfe_ipv4_msg *msg);
 
 /**
+ * IPv6 5-tuple structure.
+ */
+struct sfe_ipv6_5tuple {
+	__be32 flow_ip[4];		/**< Flow IP address */
+	__be32 return_ip[4];		/**< Return IP address */
+	__be16 flow_ident;		/**< Flow ident (e.g. TCP/UDP port) */
+	__be16 return_ident;		/**< Return ident (e.g. TCP/UDP port) */
+	u8  protocol;		/**< Protocol number */
+	u8  reserved[3];		/**< Padded for alignment */
+};
+
+/**
+ * IPv6 connection rule structure.
+ */
+struct sfe_ipv6_connection_rule {
+	u8 flow_mac[6];		/**< Flow MAC address */
+	u8 return_mac[6];		/**< Return MAC address */
+	s32 flow_interface_num;	/**< Flow interface number */
+	s32 return_interface_num;	/**< Return interface number */
+	s32 flow_top_interface_num;	/* Top flow interface number */
+	s32 return_top_interface_num;/* Top return interface number */
+	u32 flow_mtu;		/**< Flow interface's MTU */
+	u32 return_mtu;		/**< Return interface's MTU */
+};
+
+/**
  * The IPv6 rule create sub-message structure.
  */
 struct sfe_ipv6_rule_create_msg {
@@ -445,47 +443,47 @@ struct sfe_tun6rd_msg {
 };
 
 /*
- * sfe driver context instance
+ * SFE context instance.
  */
-struct sfe_drv_ctx_instance {
+struct sfe_ctx_instance {
 	int not_used;
 };
 
 /*
- * sfe_drv_ipv4_max_conn_count()
+ * sfe_ipv4_max_conn_count()
  * 	Return the maximum number of IPv4 connections that the sfe acceleration engine supports
  *
  * @return int The number of connections that can be accelerated by the sfe
  */
-int sfe_drv_ipv4_max_conn_count(void);
+int sfe_ipv4_max_conn_count(void);
 
 /*
- * sfe_drv_ipv4_tx()
+ * sfe_ipv4_tx()
  * 	Transmit an IPv4 message to the sfe
  *
- * @param sfe_drv_ctx sfe driver context
+ * @param sfe_ctx SFE. context
  * @param msg The IPv4 message
  *
  * @return sfe_tx_status_t The status of the Tx operation
  */
-extern sfe_tx_status_t sfe_drv_ipv4_tx(struct sfe_drv_ctx_instance *sfe_drv_ctx, struct sfe_ipv4_msg *msg);
+extern sfe_tx_status_t sfe_ipv4_tx(struct sfe_ctx_instance *sfe_ctx, struct sfe_ipv4_msg *msg);
 
 /*
- * sfe_drv_ipv4_notify_register()
- * 	Register a notifier callback for IPv4 messages from sfe driver
+ * sfe_ipv4_notify_register()
+ * 	Register a notifier callback for IPv4 messages from SFE
  *
  * @param cb The callback pointer
  * @param app_data The application context for this message
  *
- * @return struct sfe_drv_ctx_instance * The sfe driver context
+ * @return struct sfe_ctx_instance * The SFE. context
  */
-extern struct sfe_drv_ctx_instance *sfe_drv_ipv4_notify_register(sfe_ipv4_msg_callback_t cb, void *app_data);
+extern struct sfe_ctx_instance *sfe_ipv4_notify_register(sfe_ipv4_msg_callback_t cb, void *app_data);
 
 /*
- * sfe_drv_ipv4_notify_unregister()
- * 	Un-Register a notifier callback for IPv4 messages from sfe driver
+ * sfe_ipv4_notify_unregister()
+ * 	Un-Register a notifier callback for IPv4 messages from SFE
  */
-extern void sfe_drv_ipv4_notify_unregister(void);
+extern void sfe_ipv4_notify_unregister(void);
 
 /*
  * sfe_ipv4_msg_init()
@@ -495,40 +493,40 @@ extern void sfe_ipv4_msg_init(struct sfe_ipv4_msg *nim, u16 if_num, u32 type, u3
 			sfe_ipv4_msg_callback_t cb, void *app_data);
 
 /*
- * sfe_drv_ipv6_max_conn_count()
+ * sfe_ipv6_max_conn_count()
  * 	Return the maximum number of IPv6 connections that the sfe acceleration engine supports
  *
  * @return int The number of connections that can be accelerated by the sfe
  */
-int sfe_drv_ipv6_max_conn_count(void);
+int sfe_ipv6_max_conn_count(void);
 
 /*
- * sfe_drv_ipv6_tx()
+ * sfe_ipv6_tx()
  * 	Transmit an IPv6 message to the sfe
  *
- * @param sfe_drv_ctx sfe driver context
+ * @param sfe_ctx SFE. context
  * @param msg The IPv6 message
  *
  * @return sfe_tx_status_t The status of the Tx operation
  */
-extern sfe_tx_status_t sfe_drv_ipv6_tx(struct sfe_drv_ctx_instance *sfe_drv_ctx, struct sfe_ipv6_msg *msg);
+extern sfe_tx_status_t sfe_ipv6_tx(struct sfe_ctx_instance *sfe_ctx, struct sfe_ipv6_msg *msg);
 
 /*
- * sfe_drv_ipv6_notify_register()
- * 	Register a notifier callback for IPv6 messages from sfe driver
+ * sfe_ipv6_notify_register()
+ * 	Register a notifier callback for IPv6 messages from SFE.
  *
  * @param cb The callback pointer
  * @param app_data The application context for this message
  *
- * @return struct sfe_drv_ctx_instance * The sfe driver context
+ * @return struct sfe_ctx_instance * The SFE. context
  */
-extern struct sfe_drv_ctx_instance *sfe_drv_ipv6_notify_register(sfe_ipv6_msg_callback_t cb, void *app_data);
+extern struct sfe_ctx_instance *sfe_ipv6_notify_register(sfe_ipv6_msg_callback_t cb, void *app_data);
 
 /*
- * sfe_drv_ipv6_notify_unregister()
- * Un-Register a notifier callback for IPv6 messages from sfe driver
+ * sfe_ipv6_notify_unregister()
+ * Un-Register a notifier callback for IPv6 messages from SFE.
  */
-extern void sfe_drv_ipv6_notify_unregister(void);
+extern void sfe_ipv6_notify_unregister(void);
 
 /*
  * sfe_ipv6_msg_init()
@@ -541,7 +539,7 @@ extern void sfe_ipv6_msg_init(struct sfe_ipv6_msg *nim, u16 if_num, u32 type, u3
  * sfe_tun6rd_tx()
  * 	Transmit a tun6rd message to sfe engine
  */
-sfe_tx_status_t sfe_tun6rd_tx(struct sfe_drv_ctx_instance *sfe_ctx, struct sfe_tun6rd_msg *msg);
+sfe_tx_status_t sfe_tun6rd_tx(struct sfe_ctx_instance *sfe_ctx, struct sfe_tun6rd_msg *msg);
 
 /*
  * sfe_tun6rd_msg_init()
@@ -550,4 +548,4 @@ sfe_tx_status_t sfe_tun6rd_tx(struct sfe_drv_ctx_instance *sfe_ctx, struct sfe_t
 void sfe_tun6rd_msg_init(struct sfe_tun6rd_msg *ncm, u16 if_num, u32 type,  u32 len,
 			 void *cb, void *app_data);
 
-#endif /* __SFE_DRV_H */
+#endif /* __SFE_API_H */

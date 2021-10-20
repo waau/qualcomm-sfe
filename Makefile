@@ -1,9 +1,15 @@
-# Makefile for the sfe modules
+#
+# Makefile for Shortcut FE.
+#
 
-ccflags-y := -I$(obj) -I$(obj)/..
+obj-m += qca-nss-sfe.o
 
+qca-nss-sfe-objs := sfe_ipv4.o sfe.o sfe_init.o
 
-obj-$(simulated-driver)+= simulated-driver/
-obj-$(shortcut-fe)+=shortcut-fe/
+ifdef SFE_SUPPORT_IPV6
+qca-nss-sfe-objs += \
+	sfe_ipv6.o
+ccflags-y += -DSFE_SUPPORT_IPV6
+endif
 
-obj ?= .
+ccflags-y += -Werror -Wall

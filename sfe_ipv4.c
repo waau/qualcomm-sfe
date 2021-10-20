@@ -67,6 +67,7 @@ static char *sfe_ipv4_exception_events_string[SFE_IPV4_EXCEPTION_EVENT_LAST] = {
 	"ICMP_NO_CONNECTION",
 	"ICMP_FLUSHED_CONNECTION",
 	"HEADER_INCOMPLETE",
+	"HEADER_CSUM_BAD",
 	"BAD_TOTAL_LENGTH",
 	"NON_V4",
 	"NON_INITIAL_FRAGMENT",
@@ -747,9 +748,19 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	}
 
 	/*
-	 * Check that our "total length" is large enough for an IP header.
+	 * Validate ip csum
 	 */
 	iph = (struct iphdr *)skb->data;
+	if (unlikely(skb->ip_summed != CHECKSUM_UNNECESSARY) && (ip_fast_csum((u8 *)iph, iph->ihl))) {
+		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_HEADER_CSUM_BAD);
+
+		DEBUG_TRACE("Bad IPv4 header csum: 0x%x\n", iph->check);
+		return 0;
+	}
+
+	/*
+	 * Check that our "total length" is large enough for an IP header.
+	 */
 	tot_len = ntohs(iph->tot_len);
 	if (unlikely(tot_len < sizeof(struct iphdr))) {
 

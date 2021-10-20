@@ -237,6 +237,32 @@ enum sfe_ipv6_exception_events {
 };
 
 /*
+ * Per CPU stats
+ */
+struct sfe_ipv6_stats {
+	/*
+	 * Stats recorded in a sync period. These stats will be added to
+	 * connection_xxx64 after a sync period.
+	 */
+	u64 connection_create_requests64;
+					/* Number of IPv6 connection create requests */
+	u64 connection_create_collisions64;
+					/* Number of IPv6 connection create requests that collided with existing hash table entries */
+	u64 connection_destroy_requests64;
+					/* Number of IPv6 connection destroy requests */
+	u64 connection_destroy_misses64;
+					/* Number of IPv6 connection destroy requests that missed our hash table */
+	u64 connection_match_hash_hits64;
+					/* Number of IPv6 connection match hash hits */
+	u64 connection_match_hash_reorders64;
+					/* Number of IPv6 connection match hash reorders */
+	u64 connection_flushes64;		/* Number of IPv6 connection flushes */
+	u64 packets_forwarded64;		/* Number of IPv6 packets forwarded */
+	u64 packets_not_forwarded64;	/* Number of IPv6 packets not forwarded */
+	u64 exception_events64[SFE_IPV6_EXCEPTION_EVENT_LAST];
+};
+
+/*
  * Per-module structure.
  */
 struct sfe_ipv6 {
@@ -265,47 +291,8 @@ struct sfe_ipv6 {
 					/* Enable/disable flow cookie at runtime */
 #endif
 
-	/*
-	 * Stats recorded in a sync period. These stats will be added to
-	 * connection_xxx64 after a sync period.
-	 */
-	u32 connection_create_requests;
-					/* Number of IPv6 connection create requests */
-	u32 connection_create_collisions;
-					/* Number of IPv6 connection create requests that collided with existing hash table entries */
-	u32 connection_destroy_requests;
-					/* Number of IPv6 connection destroy requests */
-	u32 connection_destroy_misses;
-					/* Number of IPv6 connection destroy requests that missed our hash table */
-	u32 connection_match_hash_hits;
-					/* Number of IPv6 connection match hash hits */
-	u32 connection_match_hash_reorders;
-					/* Number of IPv6 connection match hash reorders */
-	u32 connection_flushes;		/* Number of IPv6 connection flushes */
-	u32 packets_forwarded;		/* Number of IPv6 packets forwarded */
-	u32 packets_not_forwarded;	/* Number of IPv6 packets not forwarded */
-	u32 exception_events[SFE_IPV6_EXCEPTION_EVENT_LAST];
-
-	/*
-	 * Summary statistics.
-	 */
-	u64 connection_create_requests64;
-					/* Number of IPv6 connection create requests */
-	u64 connection_create_collisions64;
-					/* Number of IPv6 connection create requests that collided with existing hash table entries */
-	u64 connection_destroy_requests64;
-					/* Number of IPv6 connection destroy requests */
-	u64 connection_destroy_misses64;
-					/* Number of IPv6 connection destroy requests that missed our hash table */
-	u64 connection_match_hash_hits64;
-					/* Number of IPv6 connection match hash hits */
-	u64 connection_match_hash_reorders64;
-					/* Number of IPv6 connection match hash reorders */
-	u64 connection_flushes64;	/* Number of IPv6 connection flushes */
-	u64 packets_forwarded64;	/* Number of IPv6 packets forwarded */
-	u64 packets_not_forwarded64;
-					/* Number of IPv6 packets not forwarded */
-	u64 exception_events64[SFE_IPV6_EXCEPTION_EVENT_LAST];
+	struct sfe_ipv6_stats __percpu *stats_pcpu;
+					/* Common SFE counters. */
 
 	/*
 	 * Control state.

@@ -74,8 +74,7 @@ struct sfe_ipv6_connection_match {
 	/*
 	 * References to other objects.
 	 */
-	struct sfe_ipv6_connection_match *next;
-	struct sfe_ipv6_connection_match *prev;
+	struct hlist_node hnode;
 	struct sfe_ipv6_connection *connection;
 	struct sfe_ipv6_connection_match *counter_match;
 					/* Matches the flow in the opposite direction as the one in connection */
@@ -114,8 +113,8 @@ struct sfe_ipv6_connection_match {
 	 * Stats recorded in a sync period. These stats will be added to
 	 * rx_packet_count64/rx_byte_count64 after a sync period.
 	 */
-	u32 rx_packet_count;
-	u32 rx_byte_count;
+	atomic_t rx_packet_count;
+	atomic_t rx_byte_count;
 
 	/*
 	 * Packet translation information.
@@ -182,6 +181,9 @@ struct sfe_ipv6_connection {
 					/* Pointer to the next entry in the list of all connections */
 	struct sfe_ipv6_connection *all_connections_prev;
 					/* Pointer to the previous entry in the list of all connections */
+
+	bool removed;			/* Indicates the connection is removed */
+	struct rcu_head rcu;		/* delay rcu free */
 	u32 mark;			/* mark for outgoing packet */
 	u32 debug_read_seq;		/* sequence number for debug dump */
 };
@@ -253,8 +255,7 @@ struct sfe_ipv6 {
 					/* Callback function registered by a connection manager for stats syncing */
 	struct sfe_ipv6_connection *conn_hash[SFE_IPV6_CONNECTION_HASH_SIZE];
 					/* Connection hash table */
-	struct sfe_ipv6_connection_match *conn_match_hash[SFE_IPV6_CONNECTION_HASH_SIZE];
-					/* Connection match hash table */
+	struct hlist_head hlist_conn_match_hash_head[SFE_IPV6_CONNECTION_HASH_SIZE];
 #ifdef CONFIG_NF_FLOW_COOKIE
 	struct sfe_ipv6_flow_cookie_entry sfe_flow_cookie_table[SFE_FLOW_COOKIE_SIZE];
 					/* flow cookie table*/

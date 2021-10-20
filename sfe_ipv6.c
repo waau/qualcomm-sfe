@@ -1043,8 +1043,7 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 	original_cm->xmit_dev = dest_dev;
 
 	original_cm->xmit_dev_mtu = msg->conn_rule.return_mtu;
-	memcpy(original_cm->xmit_src_mac, dest_dev->dev_addr, ETH_ALEN);
-	memcpy(original_cm->xmit_dest_mac, msg->conn_rule.return_mac, ETH_ALEN);
+
 	original_cm->connection = c;
 	original_cm->counter_match = reply_cm;
 	original_cm->flags = 0;
@@ -1071,6 +1070,19 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 	 * For the non-arp interface, we don't write L2 HDR.
 	 */
 	if (!(dest_dev->flags & IFF_NOARP)) {
+
+		/*
+		 * Check whether the rule has configured a specific source MAC address to use.
+		 * This is needed when virtual L3 interfaces such as br-lan, macvlan, vlan are used during egress
+		 */
+		if ((msg->valid_flags & SFE_RULE_CREATE_SRC_MAC_VALID) &&
+		    (msg->src_mac_rule.mac_valid_flags & SFE_SRC_MAC_RETURN_VALID)) {
+			ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)msg->src_mac_rule.return_src_mac);
+		} else {
+			ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)dest_dev->dev_addr);
+		}
+		ether_addr_copy((u8 *)original_cm->xmit_dest_mac, (u8 *)msg->conn_rule.return_mac);
+
 		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_WRITE_L2_HDR;
 
 		/*
@@ -1104,8 +1116,7 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 	reply_cm->rx_byte_count64 = 0;
 	reply_cm->xmit_dev = src_dev;
 	reply_cm->xmit_dev_mtu = msg->conn_rule.flow_mtu;
-	memcpy(reply_cm->xmit_src_mac, src_dev->dev_addr, ETH_ALEN);
-	memcpy(reply_cm->xmit_dest_mac, msg->conn_rule.flow_mac, ETH_ALEN);
+
 	reply_cm->connection = c;
 	reply_cm->counter_match = original_cm;
 	reply_cm->flags = 0;
@@ -1131,6 +1142,20 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 	 * For the non-arp interface, we don't write L2 HDR.
 	 */
 	if (!(src_dev->flags & IFF_NOARP)) {
+
+		/*
+		 * Check whether the rule has configured a specific source MAC address to use.
+		 * This is needed when virtual L3 interfaces such as br-lan, macvlan, vlan are used during egress
+		 */
+		if ((msg->valid_flags & SFE_RULE_CREATE_SRC_MAC_VALID) &&
+		    (msg->src_mac_rule.mac_valid_flags & SFE_SRC_MAC_FLOW_VALID)) {
+			ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)msg->src_mac_rule.flow_src_mac);
+		} else {
+			ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)src_dev->dev_addr);
+		}
+
+		ether_addr_copy((u8 *)reply_cm->xmit_dest_mac, (u8 *)msg->conn_rule.flow_mac);
+
 		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_WRITE_L2_HDR;
 
 		/*

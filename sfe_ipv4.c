@@ -918,19 +918,29 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	struct net_device *dest_dev;
 	struct net_device *src_dev;
 	struct sfe_ipv4_5tuple *tuple = &msg->tuple;
+	s32 flow_interface_num = msg->conn_rule.flow_top_interface_num;
+	s32 return_interface_num = msg->conn_rule.return_top_interface_num;
 
-	src_dev = dev_get_by_index(&init_net, msg->conn_rule.flow_top_interface_num);
+	if (msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_FLOW_BOTTOM_INTERFACE) {
+		flow_interface_num = msg->conn_rule.flow_interface_num;
+	}
+
+	if (msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_RETURN_BOTTOM_INTERFACE) {
+		return_interface_num = msg->conn_rule.return_interface_num;
+	}
+
+	src_dev = dev_get_by_index(&init_net, flow_interface_num);
 	if (!src_dev) {
 		DEBUG_WARN("%px: Unable to find src_dev corresponding to %d\n", msg,
-						msg->conn_rule.flow_top_interface_num);
+						flow_interface_num);
 		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
 		return -EINVAL;
 	}
 
-	dest_dev = dev_get_by_index(&init_net, msg->conn_rule.return_top_interface_num);
+	dest_dev = dev_get_by_index(&init_net, return_interface_num);
 	if (!dest_dev) {
 		DEBUG_WARN("%px: Unable to find dest_dev corresponding to %d\n", msg,
-						msg->conn_rule.return_top_interface_num);
+						return_interface_num);
 		this_cpu_inc(si->stats_pcpu->connection_create_failures64);
 		dev_put(src_dev);
 		return -EINVAL;

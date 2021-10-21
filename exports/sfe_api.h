@@ -42,6 +42,8 @@
 #define SFE_RULE_UPDATE_FLAG_CHANGE_MTU   (1<<5) /**< Update MTU of connection interfaces */
 #define SFE_RULE_CREATE_FLAG_ICMP_NO_CME_FLUSH (1<<6)/**< Rule for not flushing CME on ICMP pkt */
 #define SFE_RULE_CREATE_FLAG_L2_ENCAP     (1<<7) /**< consists of an encapsulating protocol that carries an IPv4 payload within it. */
+#define SFE_RULE_CREATE_FLAG_USE_FLOW_BOTTOM_INTERFACE (1<<8) /**< Use flow interface number instead of top interface. */
+#define SFE_RULE_CREATE_FLAG_USE_RETURN_BOTTOM_INTERFACE (1<<9) /**< Use return interface number instead of top interface. */
 
 /**
  * Rule creation validity flags.
@@ -189,7 +191,7 @@ struct sfe_pppoe_rule {
 	u16 return_pppoe_remote_mac[3];	/**< Return direction's PPPoE Server MAC address */
 };
 
- /**
+/**
  * sfe_src_mac_rule
  *	Information for source MAC address rules.
  */

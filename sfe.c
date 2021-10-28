@@ -1105,24 +1105,13 @@ int sfe_recv(struct sk_buff *skb)
 
 	/*
 	 * We're only interested in IPv4 and IPv6 packets.
-	 * TODO: Layer 3 interface check to be removed.
 	 */
 	switch (htons(skb->protocol)) {
 	case ETH_P_IP:
-		if (sfe_dev_is_layer_3_interface(dev, true) || (dev->priv_flags & IFF_MACVLAN_PORT)) {
-			return sfe_ipv4_recv(dev, skb, NULL, false);
-		}
-
-		DEBUG_TRACE("no IPv4 address for device: %s\n", dev->name);
-		return 0;
+		return sfe_ipv4_recv(dev, skb, NULL, false);
 
 	case ETH_P_IPV6:
-		if (sfe_dev_is_layer_3_interface(dev, false) || (dev->priv_flags & IFF_MACVLAN_PORT)) {
-			return sfe_ipv6_recv(dev, skb, NULL, false);
-		}
-
-		DEBUG_TRACE("no IPv6 address for device: %s\n", dev->name);
-		return 0;
+		return sfe_ipv6_recv(dev, skb, NULL, false);
 
 	default:
 		break;
@@ -1168,7 +1157,7 @@ send_to_linux:
 
 /*
  * sfe_get_exceptions()
- * 	Dump exception counters
+ *	Dump exception counters
  */
 static ssize_t sfe_get_exceptions(struct device *dev,
 				     struct device_attribute *attr,

@@ -1150,6 +1150,39 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 		reply_cm->dscp = msg->dscp_rule.return_dscp << SFE_IPV6_DSCP_SHIFT;
 		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 	}
+
+	/*
+	 * Adding PPPoE parameters to original and reply entries based on the direction where
+	 * PPPoE header is valid in ECM rule.
+	 *
+	 * If PPPoE is valid in flow direction (from interface is PPPoE), then
+	 *	original cm will have PPPoE at ingress (strip PPPoE header)
+	 *	reply cm will have PPPoE at egress (add PPPoE header)
+	 *
+	 * If PPPoE is valid in return direction (to interface is PPPoE), then
+	 *	original cm will have PPPoE at egress (add PPPoE header)
+	 *	reply cm will have PPPoE at ingress (strip PPPoE header)
+	 */
+	if (msg->valid_flags & SFE_RULE_CREATE_PPPOE_DECAP_VALID) {
+		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_DECAP;
+		original_cm->pppoe_session_id = msg->pppoe_rule.flow_pppoe_session_id;
+		ether_addr_copy(original_cm->pppoe_remote_mac, msg->pppoe_rule.flow_pppoe_remote_mac);
+
+		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_ENCAP;
+		reply_cm->pppoe_session_id = msg->pppoe_rule.flow_pppoe_session_id;
+		ether_addr_copy(reply_cm->pppoe_remote_mac, msg->pppoe_rule.flow_pppoe_remote_mac);
+	}
+
+	if (msg->valid_flags & SFE_RULE_CREATE_PPPOE_ENCAP_VALID) {
+		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_ENCAP;
+		original_cm->pppoe_session_id = msg->pppoe_rule.return_pppoe_session_id;
+		ether_addr_copy(original_cm->pppoe_remote_mac, msg->pppoe_rule.return_pppoe_remote_mac);
+
+		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_DECAP;
+		reply_cm->pppoe_session_id = msg->pppoe_rule.return_pppoe_session_id;
+		ether_addr_copy(reply_cm->pppoe_remote_mac, msg->pppoe_rule.return_pppoe_remote_mac);
+	}
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	reply_cm->flow_cookie = 0;
 #endif
@@ -1548,7 +1581,9 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 	u64 dest_rx_bytes;
 	u64 last_sync_jiffies;
 	u32 mark, src_priority, dest_priority, src_dscp, dest_dscp;
-	u32 packet, byte;
+	u32 packet, byte, original_cm_flags;
+	u16 pppoe_session_id;
+	u8 pppoe_remote_mac[ETH_ALEN];
 #ifdef CONFIG_NF_FLOW_COOKIE
 	int src_flow_cookie, dst_flow_cookie;
 #endif
@@ -1599,6 +1634,10 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 	dest_rx_bytes = reply_cm->rx_byte_count64;
 	last_sync_jiffies = get_jiffies_64() - c->last_sync_jiffies;
 	mark = c->mark;
+	original_cm_flags = original_cm->flags;
+	pppoe_session_id = original_cm->pppoe_session_id;
+	ether_addr_copy(pppoe_remote_mac, original_cm->pppoe_remote_mac);
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	src_flow_cookie = original_cm->flow_cookie;
 	dst_flow_cookie = reply_cm->flow_cookie;
@@ -1621,7 +1660,7 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 				"src_flow_cookie=\"%d\" dst_flow_cookie=\"%d\" "
 #endif
 				"last_sync=\"%llu\" "
-				"mark=\"%08x\" />\n",
+				"mark=\"%08x\"  ",
 				protocol,
 				src_dev->name,
 				&src_ip, &src_ip_xlate,
@@ -1637,6 +1676,13 @@ static bool sfe_ipv6_debug_dev_read_connections_connection(struct sfe_ipv6 *si, 
 				src_flow_cookie, dst_flow_cookie,
 #endif
 				last_sync_jiffies, mark);
+
+	if (original_cm_flags &= (SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_DECAP | SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_ENCAP)) {
+		bytes_read += snprintf(msg + bytes_read, CHAR_DEV_MSG_SIZE, "pppoe session_id=\"%u\" pppoe server MAC=\"%pM\" ",
+			pppoe_session_id, pppoe_remote_mac);
+	}
+
+	bytes_read += snprintf(msg + bytes_read, CHAR_DEV_MSG_SIZE, ")/>\n");
 
 	if (copy_to_user(buffer + *total_read, msg, CHAR_DEV_MSG_SIZE)) {
 		return false;

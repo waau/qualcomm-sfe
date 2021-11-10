@@ -50,13 +50,14 @@
  */
 #define SFE_RULE_CREATE_CONN_VALID         (1<<0) /**< IPv4 Connection is valid */
 #define SFE_RULE_CREATE_TCP_VALID          (1<<1) /**< TCP Protocol fields are valid */
-#define SFE_RULE_CREATE_PPPOE_VALID        (1<<2) /**< PPPoE fields are valid */
-#define SFE_RULE_CREATE_QOS_VALID          (1<<3) /**< QoS fields are valid */
-#define SFE_RULE_CREATE_VLAN_VALID         (1<<4) /**< VLAN fields are valid */
-#define SFE_RULE_CREATE_DSCP_MARKING_VALID (1<<5) /**< DSCP marking fields are valid */
-#define SFE_RULE_CREATE_VLAN_MARKING_VALID (1<<6) /**< VLAN marking fields are valid */
-#define SFE_RULE_CREATE_DIRECTION_VALID    (1<<7) /**< specify acceleration directions */
-#define SFE_RULE_CREATE_SRC_MAC_VALID	   (1<<8) /**< Source MAC valid */
+#define SFE_RULE_CREATE_PPPOE_DECAP_VALID  (1<<2) /**< PPPoE fields are valid */
+#define SFE_RULE_CREATE_PPPOE_ENCAP_VALID  (1<<3) /**< PPPoE fields are valid */
+#define SFE_RULE_CREATE_QOS_VALID          (1<<4) /**< QoS fields are valid */
+#define SFE_RULE_CREATE_VLAN_VALID         (1<<5) /**< VLAN fields are valid */
+#define SFE_RULE_CREATE_DSCP_MARKING_VALID (1<<6) /**< DSCP marking fields are valid */
+#define SFE_RULE_CREATE_VLAN_MARKING_VALID (1<<7) /**< VLAN marking fields are valid */
+#define SFE_RULE_CREATE_DIRECTION_VALID    (1<<8) /**< specify acceleration directions */
+#define SFE_RULE_CREATE_SRC_MAC_VALID	   (1<<9) /**< Source MAC valid */
 
 /*
  * Source MAC address valid flags (to be used with mac_valid_flags field of sfe_ipv4_src_mac_rule structure)
@@ -186,9 +187,9 @@ struct sfe_protocol_tcp_rule {
  */
 struct sfe_pppoe_rule {
 	u16 flow_pppoe_session_id;		/**< Flow direction`s PPPoE session ID. */
-	u16 flow_pppoe_remote_mac[3];	/**< Flow direction`s PPPoE Server MAC address */
+	u8 flow_pppoe_remote_mac[ETH_ALEN];	/**< Flow direction`s PPPoE Server MAC address */
 	u16 return_pppoe_session_id;	/**< Return direction's PPPoE session ID. */
-	u16 return_pppoe_remote_mac[3];	/**< Return direction's PPPoE Server MAC address */
+	u8 return_pppoe_remote_mac[ETH_ALEN];	/**< Return direction's PPPoE Server MAC address */
 };
 
 /**

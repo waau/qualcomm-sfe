@@ -68,6 +68,10 @@ struct sfe_ipv6_tcp_connection_match {
 					/* remark DSCP of packet */
 #define SFE_IPV6_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD (1<<7)
 					/* checksum offload.*/
+#define SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_DECAP (1<<8)
+					/* Indicates that PPPoE should be decapsulated */
+#define SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_ENCAP (1<<9)
+					/* Indicates that PPPoE should be encapsulated */
 
 /*
  * IPv6 connection matching structure.
@@ -148,6 +152,12 @@ struct sfe_ipv6_connection_match {
 	 */
 	u64 rx_packet_count64;
 	u64 rx_byte_count64;
+
+	/*
+	 * PPPoE information.
+	 */
+	u16 pppoe_session_id;
+	u8 pppoe_remote_mac[ETH_ALEN];
 };
 
 /*

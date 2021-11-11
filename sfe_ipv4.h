@@ -233,6 +233,7 @@ enum sfe_ipv4_exception_events {
 	SFE_IPV4_EXCEPTION_EVENT_DATAGRAM_INCOMPLETE,
 	SFE_IPV4_EXCEPTION_EVENT_IP_OPTIONS_INCOMPLETE,
 	SFE_IPV4_EXCEPTION_EVENT_UNHANDLED_PROTOCOL,
+	SFE_IPV4_EXCEPTION_EVENT_PPPOE_HEADER_ENCAP_FAILED,
 	SFE_IPV4_EXCEPTION_EVENT_LAST
 };
 
@@ -262,6 +263,7 @@ struct sfe_ipv4_stats {
 	u64 packets_forwarded64;		/* Number of IPv4 packets forwarded */
 	u64 packets_not_forwarded64;	/* Number of IPv4 packets not forwarded */
 	u64 exception_events64[SFE_IPV4_EXCEPTION_EVENT_LAST];
+	u64 pppoe_encap_packets_forwarded64;	/* Number of IPv4 PPPOE encap packets forwarded */
 };
 
 /*

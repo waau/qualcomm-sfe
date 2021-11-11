@@ -28,6 +28,7 @@
 #include "sfe.h"
 #include "sfe_flow_cookie.h"
 #include "sfe_ipv6.h"
+#include "sfe_pppoe.h"
 
 /*
  * sfe_ipv6_recv_udp()
@@ -185,6 +186,23 @@ int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 		iph = (struct ipv6hdr *)skb->data;
 		udph = (struct udphdr *)(skb->data + ihl);
 	}
+
+	/*
+	 * For PPPoE flows, add PPPoE header before L2 header is added.
+	 */
+	if (cm->flags & SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_ENCAP) {
+		if (unlikely(!sfe_pppoe_add_header(skb, cm->pppoe_session_id, PPP_IPV6))) {
+			rcu_read_unlock();
+			DEBUG_WARN("%px: PPPoE header addition failed\n", skb);
+			sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_PPPOE_HEADER_ENCAP_FAILED);
+			return 0;
+		}
+		this_cpu_inc(si->stats_pcpu->pppoe_encap_packets_forwarded64);
+	}
+
+	/*
+	 * TODO: VLAN header should be added here when they are supported.
+	 */
 
 	/*
 	 * Update DSCP

@@ -919,6 +919,26 @@ void sfe_ipv4_update_rule(struct sfe_ipv4_rule_create_msg *msg)
 }
 
 /*
+ * sfe_ipv4_xmit_eth_type_check()
+ *	Checking if MAC header has to be written.
+ */
+static inline bool sfe_ipv4_xmit_eth_type_check(struct net_device *dev, u32 cm_flags)
+{
+	if (!(dev->flags & IFF_NOARP)) {
+		return true;
+	}
+
+	/*
+	 * For PPPoE, since we are now supporting PPPoE encapsulation, we are writing L2 header.
+	 */
+	if (unlikely(cm_flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PPPOE_ENCAP)) {
+		return true;
+	}
+
+	return false;
+}
+
+/*
  * sfe_ipv4_create_rule()
  *	Create a forwarding rule.
  */
@@ -1141,7 +1161,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	/*
 	 * For the non-arp interface, we don't write L2 HDR.
 	 */
-	if (!(dest_dev->flags & IFF_NOARP)) {
+	if (sfe_ipv4_xmit_eth_type_check(dest_dev, original_cm->flags)) {
 
 		/*
 		 * Check whether the rule has configured a specific source MAC address to use.
@@ -1230,7 +1250,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	/*
 	 * For the non-arp interface, we don't write L2 HDR.
 	 */
-	if (!(src_dev->flags & IFF_NOARP)) {
+	if (sfe_ipv4_xmit_eth_type_check(src_dev, reply_cm->flags)) {
 
 		/*
 		 * Check whether the rule has configured a specific source MAC address to use.
@@ -1713,7 +1733,7 @@ static bool sfe_ipv4_debug_dev_read_connections_connection(struct sfe_ipv4 *si, 
 				last_sync_jiffies, mark);
 
 	if (original_cm_flags &= (SFE_IPV4_CONNECTION_MATCH_FLAG_PPPOE_DECAP | SFE_IPV4_CONNECTION_MATCH_FLAG_PPPOE_ENCAP)) {
-		bytes_read += snprintf(msg + bytes_read, CHAR_DEV_MSG_SIZE, "pppoe session_id=\"%u\" pppoe server MAC=\"%pM\" ",
+		bytes_read += snprintf(msg + bytes_read, CHAR_DEV_MSG_SIZE, "pppoe_session_id=\"%u\" pppoe_server MAC=\"%pM\" ",
 				pppoe_session_id, pppoe_remote_mac);
 	}
 

@@ -240,6 +240,7 @@ enum sfe_ipv6_exception_events {
 	SFE_IPV6_EXCEPTION_EVENT_IP_OPTIONS_INCOMPLETE,
 	SFE_IPV6_EXCEPTION_EVENT_UNHANDLED_PROTOCOL,
 	SFE_IPV6_EXCEPTION_EVENT_FLOW_COOKIE_ADD_FAIL,
+	SFE_IPV6_EXCEPTION_EVENT_PPPOE_HEADER_ENCAP_FAILED,
 	SFE_IPV6_EXCEPTION_EVENT_LAST
 };
 
@@ -270,6 +271,7 @@ struct sfe_ipv6_stats {
 	u64 packets_forwarded64;		/* Number of IPv6 packets forwarded */
 	u64 packets_not_forwarded64;	/* Number of IPv6 packets not forwarded */
 	u64 exception_events64[SFE_IPV6_EXCEPTION_EVENT_LAST];
+	u64 pppoe_encap_packets_forwarded64;	/* Number of IPv6 PPPOE encap packets forwarded */
 };
 
 /*

@@ -1118,7 +1118,7 @@ int sfe_recv(struct sk_buff *skb)
 
 	case ETH_P_IPV6:
 		if (sfe_dev_is_layer_3_interface(dev, false) || (dev->priv_flags & IFF_MACVLAN_PORT)) {
-			return sfe_ipv6_recv(dev, skb, NULL);
+			return sfe_ipv6_recv(dev, skb, NULL, false);
 		}
 
 		DEBUG_TRACE("no IPv6 address for device: %s\n", dev->name);
@@ -1149,7 +1149,7 @@ int sfe_recv(struct sk_buff *skb)
 	}
 
 	if (likely(l2_info.protocol == ETH_P_IPV6)) {
-		ret = sfe_ipv6_recv(dev, skb, &l2_info);
+		ret = sfe_ipv6_recv(dev, skb, &l2_info, false);
 		if (likely(ret)) {
 			return ret;
 		}

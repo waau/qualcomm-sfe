@@ -94,6 +94,7 @@ struct sfe_ipv6_connection_match {
 	__be16 match_src_port;		/* Source port/connection ident */
 	__be16 match_dest_port;		/* Destination port/connection ident */
 
+	struct udp_sock *up;		/* Stores UDP sock information; valid only in decap path */
 	/*
 	 * Control the operations of the match.
 	 */
@@ -271,6 +272,7 @@ struct sfe_ipv6_stats {
 	u64 connection_match_hash_reorders64;
 					/* Number of IPv6 connection match hash reorders */
 	u64 connection_flushes64;		/* Number of IPv6 connection flushes */
+	u64 packets_dropped64;			/* Number of IPv4 packets dropped */
 	u64 packets_forwarded64;		/* Number of IPv6 packets forwarded */
 	u64 packets_not_forwarded64;	/* Number of IPv6 packets not forwarded */
 	u64 exception_events64[SFE_IPV6_EXCEPTION_EVENT_LAST];

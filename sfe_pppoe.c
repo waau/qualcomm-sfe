@@ -2,7 +2,7 @@
  * sfe_pppoe.c
  *     API for shortcut forwarding engine PPPoE flows
  *
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -26,15 +26,13 @@
 #include "sfe.h"
 #include "sfe_pppoe.h"
 
-#define SFE_PPPOE_HEADER_SIZE (sizeof(struct pppoe_hdr) + 2)
-
 /*
  * sfe_pppoe_add_header()
  *	Add PPPoE header.
  *
  * skb->data will point to PPPoE header after the function
  */
-int sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_protocol)
+bool sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_protocol)
 {
 	u16 *l2_header;
 	struct pppoe_hdr *ph;
@@ -45,7 +43,7 @@ int sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_prot
 	 */
 	if (unlikely(!pskb_may_pull(skb, SFE_PPPOE_HEADER_SIZE))) {
 		DEBUG_TRACE("%px: Not enough headroom for PPPoE header \n", skb);
-		return 0;
+		return false;
 	}
 
 	/*
@@ -78,5 +76,59 @@ int sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_prot
 	 */
 	__skb_push(skb, SFE_PPPOE_HEADER_SIZE);
 
-	return 1;
+	return true;
+}
+
+/*
+ * sfe_pppoe_validate_hdr()
+ *	Validate PPPoE header
+ *
+ * Returns true if the packet is good for further processing.
+ */
+bool sfe_pppoe_validate_hdr(struct sk_buff *skb, struct sfe_l2_info *l2_info)
+{
+	u16 ppp_protocol;
+	unsigned int len;
+	int pppoe_len;
+	struct pppoe_hdr *ph = (struct pppoe_hdr *)skb->data;
+
+	/*
+	 * Check that we have space for PPPoE header here.
+	 */
+	if (unlikely(!pskb_may_pull(skb, SFE_PPPOE_HEADER_SIZE))) {
+		DEBUG_TRACE("%px: packet too short for PPPoE header\n", skb);
+		return false;
+	}
+
+	len = skb->len;
+	pppoe_len = ntohs(ph->length);
+	if (unlikely(len < pppoe_len)) {
+		DEBUG_TRACE("%px: len: %u is too short to %u\n", skb, len, pppoe_len);
+		return false;
+	}
+
+	ppp_protocol = htons((*(uint16_t *)((u8 *)ph + sizeof(*ph))));
+
+	/*
+	 * Converting PPP protocol values to ether type protocol values
+	 */
+	switch(ppp_protocol) {
+	case PPP_IP:
+		sfe_l2_protocol_set(l2_info, ETH_P_IP);
+		return true;
+
+	case PPP_IPV6:
+		sfe_l2_protocol_set(l2_info, ETH_P_IPV6);
+		return true;
+
+	case PPP_LCP:
+		DEBUG_TRACE("%px: LCP packets are not supported in SFE\n", skb);
+		return false;
+
+	default:
+		DEBUG_TRACE("%px: Unsupported protocol : %d in PPP header \n", skb, ppp_protocol);
+		break;
+	}
+
+	return false;
 }

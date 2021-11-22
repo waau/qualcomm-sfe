@@ -2,7 +2,7 @@
  * sfe_pppoe.h
  *	Shortcut flow acceleration for PPPoE flow
  *
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,5 +17,9 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 #include <linux/ppp_defs.h>
+#include <linux/if_pppox.h>
 
-int sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_protocol);
+#define SFE_PPPOE_HEADER_SIZE (sizeof(struct pppoe_hdr) + 2)
+
+bool sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_protocol);
+bool sfe_pppoe_validate_hdr(struct sk_buff *skb, struct sfe_l2_info *l2_info);

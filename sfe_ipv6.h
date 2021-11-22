@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine header file for IPv6.
  *
  * Copyright (c) 2015-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -241,6 +241,9 @@ enum sfe_ipv6_exception_events {
 	SFE_IPV6_EXCEPTION_EVENT_UNHANDLED_PROTOCOL,
 	SFE_IPV6_EXCEPTION_EVENT_FLOW_COOKIE_ADD_FAIL,
 	SFE_IPV6_EXCEPTION_EVENT_PPPOE_HEADER_ENCAP_FAILED,
+	SFE_IPV6_EXCEPTION_EVENT_INVALID_PPPOE_SESSION,
+	SFE_IPV6_EXCEPTION_EVENT_INCORRECT_PPPOE_PARSING,
+	SFE_IPV6_EXCEPTION_EVENT_PPPOE_NOT_SET_IN_CME,
 	SFE_IPV6_EXCEPTION_EVENT_LAST
 };
 
@@ -272,6 +275,7 @@ struct sfe_ipv6_stats {
 	u64 packets_not_forwarded64;	/* Number of IPv6 packets not forwarded */
 	u64 exception_events64[SFE_IPV6_EXCEPTION_EVENT_LAST];
 	u64 pppoe_encap_packets_forwarded64;	/* Number of IPv6 PPPOE encap packets forwarded */
+	u64 pppoe_decap_packets_forwarded64;	/* Number of IPv6 PPPOE decap packets forwarded */
 };
 
 /*

@@ -3,7 +3,7 @@
  *     API for shortcut forwarding engine.
  *
  * Copyright (c) 2015,2016, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -29,6 +29,7 @@
 #include "sfe_debug.h"
 #include "sfe_api.h"
 #include "sfe.h"
+#include "sfe_pppoe.h"
 
 extern int max_ipv4_conn;
 extern int max_ipv6_conn;
@@ -434,6 +435,57 @@ static void sfe_ipv4_stats_sync_callback(struct sfe_connection_sync *sis)
 	 */
 	sync_cb(sfe_ctx->ipv4_stats_sync_data, &msg);
 	rcu_read_unlock();
+}
+
+/*
+ * sfe_recv_parse_l2()
+ *	Parse L2 headers
+ *
+ * Returns true if the packet is parsed and false otherwise.
+ */
+static bool sfe_recv_parse_l2(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_info *l2_info)
+{
+	/*
+	 * l2_hdr_offset will not change as we parse more L2.5 headers
+	 * TODO: Move from storing offsets to storing pointers
+	 */
+	sfe_l2_hdr_offset_set(l2_info, ((skb->data - ETH_HLEN) - skb->head));
+
+	/*
+	 * TODO: Add VLAN parsing here.
+	 * Add VLAN fields to l2_info structure and update l2_hdr_size
+	 * In case of exception, use l2_hdr_size to move the data pointer back
+	 */
+
+	/*
+	 * PPPoE parsing
+	 */
+	if (unlikely(htons(ETH_P_PPP_SES) != skb->protocol)) {
+		return false;
+	}
+
+	/*
+	 * Parse only PPPoE session packets
+	 * skb->data is pointing to PPPoE hdr
+	 */
+	if (!sfe_pppoe_validate_hdr(skb, l2_info)) {
+
+		/*
+		 * For exception from PPPoE return from here without modifying the skb->data
+		 * This includes non-IPv4/v6 cases also
+		 */
+		return false;
+	}
+
+	sfe_l2_parse_flag_set(l2_info, SFE_L2_PARSE_FLAGS_PPPOE_INGRESS);
+	sfe_l2_pppoe_hdr_offset_set(l2_info, (skb->data - skb->head));
+	sfe_l2_hdr_size_set(l2_info, SFE_PPPOE_HEADER_SIZE);
+
+	/*
+	 * Pull by L2 header size considering all L2.5 headers
+	 */
+	__skb_pull(skb, sfe_l2_hdr_size_get(l2_info));
+	return true;
 }
 
 /*
@@ -1023,6 +1075,8 @@ EXPORT_SYMBOL(sfe_tun6rd_msg_init);
 int sfe_recv(struct sk_buff *skb)
 {
 	struct net_device *dev;
+	struct sfe_l2_info l2_info;
+	int ret;
 
 	/*
 	 * We know that for the vast majority of packets we need the transport
@@ -1053,25 +1107,62 @@ int sfe_recv(struct sk_buff *skb)
 	 * We're only interested in IPv4 and IPv6 packets.
 	 * TODO: Layer 3 interface check to be removed.
 	 */
-	if (likely(htons(ETH_P_IP) == skb->protocol)) {
+	switch (htons(skb->protocol)) {
+	case ETH_P_IP:
 		if (sfe_dev_is_layer_3_interface(dev, true) || (dev->priv_flags & IFF_MACVLAN_PORT)) {
-			return sfe_ipv4_recv(dev, skb);
+			return sfe_ipv4_recv(dev, skb, NULL);
 		}
 
 		DEBUG_TRACE("no IPv4 address for device: %s\n", dev->name);
 		return 0;
-	}
 
-	if (likely(htons(ETH_P_IPV6) == skb->protocol)) {
+	case ETH_P_IPV6:
 		if (sfe_dev_is_layer_3_interface(dev, false) || (dev->priv_flags & IFF_MACVLAN_PORT)) {
-			return sfe_ipv6_recv(dev, skb);
+			return sfe_ipv6_recv(dev, skb, NULL);
 		}
 
 		DEBUG_TRACE("no IPv6 address for device: %s\n", dev->name);
 		return 0;
+
+	default:
+		break;
 	}
 
-	DEBUG_TRACE("not IP packet\n");
+	/*
+	 * Parse the L2 headers to find the L3 protocol and the L2 header offset
+	 */
+	if (unlikely(!sfe_recv_parse_l2(dev, skb, &l2_info))) {
+		DEBUG_TRACE("%px: Invalid L2.5 header format\n", skb);
+		return 0;
+	}
+
+	/*
+	 * Protocol in l2_info is expected to be in network byte order.
+	 * PPPoE is doing it in the sfe_pppoe_validate_hdr()
+	 */
+	if (likely(l2_info.protocol == ETH_P_IP)) {
+		ret = sfe_ipv4_recv(dev, skb, &l2_info);
+		if (unlikely(!ret)) {
+			goto send_to_linux;
+		}
+		return ret;
+	}
+
+	if (likely(l2_info.protocol == ETH_P_IPV6)) {
+		ret = sfe_ipv6_recv(dev, skb, &l2_info);
+		if (likely(ret)) {
+			return ret;
+		}
+	}
+
+send_to_linux:
+	/*
+	 * Push the data back before sending to linux if -
+	 * a. There is any exception from IPV4/V6
+	 * b. If the next protocol is neither IPV4 nor IPV6
+	 */
+	__skb_push(skb, sfe_l2_hdr_size_get(&l2_info));
+
 	return 0;
 }
 

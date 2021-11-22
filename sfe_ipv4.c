@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine - IPv4 edition.
  *
  * Copyright (c) 2013-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -294,6 +294,8 @@ static void sfe_ipv4_update_summary_stats(struct sfe_ipv4 *si,  struct sfe_ipv4_
 		stats->connection_flushes64 += s->connection_flushes64;
 		stats->packets_forwarded64 += s->packets_forwarded64;
 		stats->packets_not_forwarded64 += s->packets_not_forwarded64;
+		stats->pppoe_encap_packets_forwarded64 += s->pppoe_encap_packets_forwarded64;
+		stats->pppoe_decap_packets_forwarded64 += s->pppoe_decap_packets_forwarded64;
 	}
 
 }
@@ -725,7 +727,7 @@ void sfe_ipv4_exception_stats_inc(struct sfe_ipv4 *si, enum sfe_ipv4_exception_e
  *
  * Returns 1 if the packet is forwarded or 0 if it isn't.
  */
-int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
+int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_info *l2_info)
 {
 	struct sfe_ipv4 *si = &__si;
 	unsigned int len;
@@ -824,11 +826,11 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 
 	protocol = iph->protocol;
 	if (IPPROTO_UDP == protocol) {
-		return sfe_ipv4_recv_udp(si, skb, dev, len, iph, ihl, flush_on_find);
+		return sfe_ipv4_recv_udp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info);
 	}
 
 	if (IPPROTO_TCP == protocol) {
-		return sfe_ipv4_recv_tcp(si, skb, dev, len, iph, ihl, flush_on_find);
+		return sfe_ipv4_recv_tcp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info);
 	}
 
 	if (IPPROTO_ICMP == protocol) {
@@ -1126,6 +1128,8 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 		}
 	}
 
+	reply_cm->flags = 0;
+
 	/*
 	 * Adding PPPoE parameters to original and reply entries based on the direction where
 	 * PPPoE header is valid in ECM rule.
@@ -1214,7 +1218,6 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 
 	reply_cm->connection = c;
 	reply_cm->counter_match = original_cm;
-	reply_cm->flags = 0;
 	if (msg->valid_flags & SFE_RULE_CREATE_QOS_VALID) {
 		reply_cm->priority = msg->qos_rule.return_qos_tag;
 		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK;
@@ -1875,7 +1878,9 @@ static bool sfe_ipv4_debug_dev_read_stats(struct sfe_ipv4 *si, char *buffer, cha
 			      "create_failures=\"%llu\" "
 			      "destroy_requests=\"%llu\" destroy_misses=\"%llu\" "
 			      "flushes=\"%llu\" "
-			      "hash_hits=\"%llu\" hash_reorders=\"%llu\" />\n",
+			      "hash_hits=\"%llu\" hash_reorders=\"%llu\" "
+			      "pppoe_encap_pkts_fwded=\"%llu\" "
+			      "pppoe_decap_pkts_fwded=\"%llu\" />\n",
 				num_conn,
 				stats.packets_forwarded64,
 				stats.packets_not_forwarded64,
@@ -1886,7 +1891,9 @@ static bool sfe_ipv4_debug_dev_read_stats(struct sfe_ipv4 *si, char *buffer, cha
 				stats.connection_destroy_misses64,
 				stats.connection_flushes64,
 				stats.connection_match_hash_hits64,
-				stats.connection_match_hash_reorders64);
+				stats.connection_match_hash_reorders64,
+				stats.pppoe_encap_packets_forwarded64,
+				stats.pppoe_decap_packets_forwarded64);
 	if (copy_to_user(buffer + *total_read, msg, CHAR_DEV_MSG_SIZE)) {
 		return false;
 	}

@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine file for IPv6 TCP
  *
  * Copyright (c) 2015-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -115,7 +115,7 @@ static bool sfe_ipv6_process_tcp_option_sack(const struct tcphdr *th, const u32 
  *	Handle TCP packet receives and forwarding.
  */
 int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool flush_on_find, struct sfe_l2_info *l2_info)
 {
 	struct tcphdr *tcph;
 	struct sfe_ipv6_addr *src_ip;
@@ -469,6 +469,42 @@ int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	}
 
 	/*
+	 * For PPPoE packets, match server MAC and session id
+	 */
+	if (unlikely(cm->flags & SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_DECAP)) {
+		struct pppoe_hdr *ph;
+		struct ethhdr *eth;
+
+		if (unlikely(!l2_info) || unlikely(!sfe_l2_parse_flag_check(l2_info, SFE_L2_PARSE_FLAGS_PPPOE_INGRESS))) {
+			rcu_read_unlock();
+			DEBUG_TRACE("%px: PPPoE is not parsed\n", skb);
+			sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_INVALID_PPPOE_SESSION);
+			return 0;
+		}
+
+		ph = (struct pppoe_hdr *)(skb->head + sfe_l2_pppoe_hdr_offset_get(l2_info));
+		eth = (struct ethhdr *)(skb->head + sfe_l2_hdr_offset_get(l2_info));
+
+		if (unlikely(cm->pppoe_session_id != htons(ph->sid)) || unlikely(!(ether_addr_equal((u8*)cm->pppoe_remote_mac, (u8 *)eth->h_source)))) {
+			rcu_read_unlock();
+			DEBUG_TRACE("%px: PPPoE sessions did not match \n", skb);
+			sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_INVALID_PPPOE_SESSION);
+			return 0;
+		}
+		this_cpu_inc(si->stats_pcpu->pppoe_decap_packets_forwarded64);
+
+	} else if (unlikely(l2_info) && unlikely(sfe_l2_parse_flag_check(l2_info, SFE_L2_PARSE_FLAGS_PPPOE_INGRESS))) {
+
+		/*
+		 * If packet contains PPPOE header but CME doesn't contain PPPoE flag yet we are exceptioning the packet to linux
+		 */
+		rcu_read_unlock();
+		DEBUG_TRACE("%px: CME doesn't contain PPPOE flag but packet has PPPoE header\n", skb);
+		sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_PPPOE_NOT_SET_IN_CME);
+		return 0;
+	}
+
+	/*
 	 * From this point on we're good to modify the packet.
 	 */
 
@@ -603,6 +639,7 @@ int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 			 * For the simple case we write this really fast.
 			 */
 			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
+
 			eth->h_proto = htons(ETH_P_IPV6);
 			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
 			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);

@@ -572,4 +572,11 @@ sfe_tx_status_t sfe_tun6rd_tx(struct sfe_ctx_instance *sfe_ctx, struct sfe_tun6r
 void sfe_tun6rd_msg_init(struct sfe_tun6rd_msg *ncm, u16 if_num, u32 type,  u32 len,
 			 void *cb, void *app_data);
 
+/*
+ *
+ * sfe_is_l2_feature_enabled()
+ *	l2 feature flag is enabled or disabled
+ */
+bool sfe_is_l2_feature_enabled(void);
+
 #endif /* __SFE_API_H */

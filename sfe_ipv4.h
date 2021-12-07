@@ -289,7 +289,7 @@ struct sfe_ipv4 {
 	/*
 	 * Control state.
 	 */
-	struct kobject *sys_sfe_ipv4;	/* sysfs linkage */
+	struct kobject *sys_ipv4;	/* sysfs linkage */
 	int debug_dev;			/* Major number of the debug char device */
 	u32 debug_read_seq;	/* sequence number for debug dump */
 };
@@ -321,6 +321,16 @@ struct sfe_ipv4_debug_xml_write_state {
 
 typedef bool (*sfe_ipv4_debug_xml_write_method_t)(struct sfe_ipv4 *si, char *buffer, char *msg, size_t *length,
 						  int *total_read, struct sfe_ipv4_debug_xml_write_state *ws);
+
+u16 sfe_ipv4_gen_ip_csum(struct iphdr *iph);
+void sfe_ipv4_exception_stats_inc(struct sfe_ipv4 *si, enum sfe_ipv4_exception_events reason);
+bool sfe_ipv4_remove_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c);
+void sfe_ipv4_flush_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c, sfe_sync_reason_t reason);
+
+struct sfe_ipv4_connection_match *
+sfe_ipv4_find_connection_match_rcu(struct sfe_ipv4 *si, struct net_device *dev, u8 protocol,
+					__be32 src_ip, __be16 src_port,
+					__be32 dest_ip, __be16 dest_port);
 
 void sfe_ipv4_exit(void);
 int sfe_ipv4_init(void);

@@ -32,6 +32,9 @@
 #include "sfe.h"
 #include "sfe_flow_cookie.h"
 #include "sfe_ipv4.h"
+#include "sfe_ipv4_udp.h"
+#include "sfe_ipv4_tcp.h"
+#include "sfe_ipv4_icmp.h"
 
 static char *sfe_ipv4_exception_events_string[SFE_IPV4_EXCEPTION_EVENT_LAST] = {
 	"UDP_HEADER_INCOMPLETE",
@@ -80,7 +83,7 @@ static struct sfe_ipv4 __si;
  *
  * Note that this function assumes that we have only 20 bytes of IP header.
  */
-static inline u16 sfe_ipv4_gen_ip_csum(struct iphdr *iph)
+u16 sfe_ipv4_gen_ip_csum(struct iphdr *iph)
 {
 	u32 sum;
 	u16 *i = (u16 *)iph;
@@ -115,13 +118,13 @@ static inline unsigned int sfe_ipv4_get_connection_match_hash(struct net_device 
 }
 
 /*
- * sfe_ipv4_find_sfe_ipv4_connection_match_rcu()
+ * sfe_ipv4_find_connection_match_rcu()
  *	Get the IPv4 flow match info that corresponds to a particular 5-tuple.
  *
  * On entry we must be holding the lock that protects the hash table.
  */
-static struct sfe_ipv4_connection_match *
-sfe_ipv4_find_sfe_ipv4_connection_match_rcu(struct sfe_ipv4 *si, struct net_device *dev, u8 protocol,
+struct sfe_ipv4_connection_match *
+sfe_ipv4_find_connection_match_rcu(struct sfe_ipv4 *si, struct net_device *dev, u8 protocol,
 					__be32 src_ip, __be16 src_port,
 					__be32 dest_ip, __be16 dest_port)
 {
@@ -295,10 +298,10 @@ static void sfe_ipv4_update_summary_stats(struct sfe_ipv4 *si,  struct sfe_ipv4_
 }
 
 /*
- * sfe_ipv4_insert_sfe_ipv4_connection_match()
+ * sfe_ipv4_insert_connection_match()
  *	Insert a connection match into the hash.
  */
-static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si,
+static inline void sfe_ipv4_insert_connection_match(struct sfe_ipv4 *si,
 							     struct sfe_ipv4_connection_match *cm)
 {
 	unsigned int conn_match_idx
@@ -341,10 +344,10 @@ static inline void sfe_ipv4_insert_sfe_ipv4_connection_match(struct sfe_ipv4 *si
 }
 
 /*
- * sfe_ipv4_remove_sfe_ipv4_connection_match()
+ * sfe_ipv4_remove_connection_match()
  *	Remove a connection match object from the hash.
  */
-static inline void sfe_ipv4_remove_sfe_ipv4_connection_match(struct sfe_ipv4 *si, struct sfe_ipv4_connection_match *cm)
+static inline void sfe_ipv4_remove_connection_match(struct sfe_ipv4 *si, struct sfe_ipv4_connection_match *cm)
 {
 
 	lockdep_assert_held(&si->lock);
@@ -395,12 +398,12 @@ static inline unsigned int sfe_ipv4_get_connection_hash(u8 protocol, __be32 src_
 }
 
 /*
- * sfe_ipv4_find_sfe_ipv4_connection()
+ * sfe_ipv4_find_connection()
  *	Get the IPv4 connection info that corresponds to a particular 5-tuple.
  *
  * On entry we must be holding the lock that protects the hash table.
  */
-static inline struct sfe_ipv4_connection *sfe_ipv4_find_sfe_ipv4_connection(struct sfe_ipv4 *si, u32 protocol,
+static inline struct sfe_ipv4_connection *sfe_ipv4_find_connection(struct sfe_ipv4 *si, u32 protocol,
 									    __be32 src_ip, __be16 src_port,
 									    __be32 dest_ip, __be16 dest_port)
 {
@@ -442,7 +445,7 @@ void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark)
 	struct sfe_ipv4_connection *c;
 
 	spin_lock_bh(&si->lock);
-	c = sfe_ipv4_find_sfe_ipv4_connection(si, mark->protocol,
+	c = sfe_ipv4_find_connection(si, mark->protocol,
 					      mark->src_ip.ip, mark->src_port,
 					      mark->dest_ip.ip, mark->dest_port);
 	if (c) {
@@ -459,12 +462,12 @@ void sfe_ipv4_mark_rule(struct sfe_connection_mark *mark)
 }
 
 /*
- * sfe_ipv4_insert_sfe_ipv4_connection()
+ * sfe_ipv4_insert_connection()
  *	Insert a connection into the hash.
  *
  * On entry we must be holding the lock that protects the hash table.
  */
-static void sfe_ipv4_insert_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c)
+static void sfe_ipv4_insert_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c)
 {
 	struct sfe_ipv4_connection **hash_head;
 	struct sfe_ipv4_connection *prev_head;
@@ -505,15 +508,15 @@ static void sfe_ipv4_insert_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_
 	/*
 	 * Insert the connection match objects too.
 	 */
-	sfe_ipv4_insert_sfe_ipv4_connection_match(si, c->original_match);
-	sfe_ipv4_insert_sfe_ipv4_connection_match(si, c->reply_match);
+	sfe_ipv4_insert_connection_match(si, c->original_match);
+	sfe_ipv4_insert_connection_match(si, c->reply_match);
 }
 
 /*
- * sfe_ipv4_remove_sfe_ipv4_connection()
+ * sfe_ipv4_remove_connection()
  *	Remove a sfe_ipv4_connection object from the hash.
  */
-static bool sfe_ipv4_remove_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c)
+bool sfe_ipv4_remove_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c)
 {
 	lockdep_assert_held(&si->lock);
 
@@ -525,8 +528,8 @@ static bool sfe_ipv4_remove_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_
 	/*
 	 * Remove the connection match objects.
 	 */
-	sfe_ipv4_remove_sfe_ipv4_connection_match(si, c->reply_match);
-	sfe_ipv4_remove_sfe_ipv4_connection_match(si, c->original_match);
+	sfe_ipv4_remove_connection_match(si, c->reply_match);
+	sfe_ipv4_remove_connection_match(si, c->original_match);
 
 	/*
 	 * Unlink the connection.
@@ -571,14 +574,14 @@ static bool sfe_ipv4_remove_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_
 }
 
 /*
- * sfe_ipv4_gen_sync_sfe_ipv4_connection()
+ * sfe_ipv4_gen_sync_connection()
  *	Sync a connection.
  *
  * On entry to this function we expect that the lock for the connection is either
  * already held (while called from sfe_ipv4_periodic_sync() or isn't required
- * (while called from sfe_ipv4_flush_sfe_ipv4_connection())
+ * (while called from sfe_ipv4_flush_connection())
  */
-static void sfe_ipv4_gen_sync_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c,
+static void sfe_ipv4_gen_sync_connection(struct sfe_ipv4 *si, struct sfe_ipv4_connection *c,
 						  struct sfe_connection_sync *sis, sfe_sync_reason_t reason,
 						  u64 now_jiffies)
 {
@@ -635,10 +638,10 @@ static void sfe_ipv4_gen_sync_sfe_ipv4_connection(struct sfe_ipv4 *si, struct sf
 }
 
 /*
- * sfe_ipv4_free_sfe_ipv4_connection_rcu()
+ * sfe_ipv4_free_connection_rcu()
  *	Called at RCU qs state to free the connection object.
  */
-static void sfe_ipv4_free_sfe_ipv4_connection_rcu(struct rcu_head *head)
+static void sfe_ipv4_free_connection_rcu(struct rcu_head *head)
 {
 	struct sfe_ipv4_connection *c;
 
@@ -663,7 +666,7 @@ static void sfe_ipv4_free_sfe_ipv4_connection_rcu(struct rcu_head *head)
 }
 
 /*
- * sfe_ipv4_flush_sfe_ipv4_connection()
+ * sfe_ipv4_flush_connection()
  *	Flush a connection and free all associated resources.
  *
  * We need to be called with bottom halves disabled locally as we need to acquire
@@ -671,7 +674,7 @@ static void sfe_ipv4_free_sfe_ipv4_connection_rcu(struct rcu_head *head)
  * from within a BH and so we're fine, but we're also called when connections are
  * torn down.
  */
-static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si,
+void sfe_ipv4_flush_connection(struct sfe_ipv4 *si,
 					       struct sfe_ipv4_connection *c,
 					       sfe_sync_reason_t reason)
 {
@@ -691,7 +694,7 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si,
 	if (sync_rule_callback) {
 		struct sfe_connection_sync sis;
 		now_jiffies = get_jiffies_64();
-		sfe_ipv4_gen_sync_sfe_ipv4_connection(si, c, &sis, reason, now_jiffies);
+		sfe_ipv4_gen_sync_connection(si, c, &sis, reason, now_jiffies);
 		sync_rule_callback(&sis);
 	}
 
@@ -701,1072 +704,18 @@ static void sfe_ipv4_flush_sfe_ipv4_connection(struct sfe_ipv4 *si,
 	 * Release our hold of the source and dest devices and free the memory
 	 * for our connection objects.
 	 */
-	call_rcu(&c->rcu, sfe_ipv4_free_sfe_ipv4_connection_rcu);
+	call_rcu(&c->rcu, sfe_ipv4_free_connection_rcu);
 }
 
 /*
  * sfe_ipv4_exception_stats_inc()
  *	Increment exception stats.
  */
-static inline void sfe_ipv4_exception_stats_inc(struct sfe_ipv4 *si, enum sfe_ipv4_exception_events reason)
+void sfe_ipv4_exception_stats_inc(struct sfe_ipv4 *si, enum sfe_ipv4_exception_events reason)
 {
        struct sfe_ipv4_stats *stats = this_cpu_ptr(si->stats_pcpu);
        stats->exception_events64[reason]++;
        stats->packets_not_forwarded64++;
-}
-
-/*
- * sfe_ipv4_recv_udp()
- *	Handle UDP packet receives and forwarding.
- */
-static int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find)
-{
-	struct udphdr *udph;
-	__be32 src_ip;
-	__be32 dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-	struct sfe_ipv4_connection_match *cm;
-	u8 ttl;
-	struct net_device *xmit_dev;
-	bool ret;
-
-	/*
-	 * Is our packet too short to contain a valid UDP header?
-	 */
-	if (unlikely(!pskb_may_pull(skb, (sizeof(struct udphdr) + ihl)))) {
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE);
-		DEBUG_TRACE("packet too short for UDP header\n");
-		return 0;
-	}
-
-	/*
-	 * Read the IP address and port information.  Read the IP header data first
-	 * because we've almost certainly got that in the cache.  We may not yet have
-	 * the UDP header cached though so allow more time for any prefetching.
-	 */
-	src_ip = iph->saddr;
-	dest_ip = iph->daddr;
-
-	udph = (struct udphdr *)(skb->data + ihl);
-	src_port = udph->source;
-	dest_port = udph->dest;
-
-	rcu_read_lock();
-
-	/*
-	 * Look for a connection match.
-	 */
-#ifdef CONFIG_NF_FLOW_COOKIE
-	cm = si->sfe_flow_cookie_table[skb->flow_cookie & SFE_FLOW_COOKIE_MASK].match;
-	if (unlikely(!cm)) {
-		cm = sfe_ipv4_find_sfe_ipv4_connection_match_rcu(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
-	}
-#else
-	cm = sfe_ipv4_find_sfe_ipv4_connection_match_rcu(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
-#endif
-	if (unlikely(!cm)) {
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_NO_CONNECTION);
-		DEBUG_TRACE("no connection found\n");
-		return 0;
-	}
-
-	/*
-	 * If our packet has beern marked as "flush on find" we can't actually
-	 * forward it in the fast path, but now that we've found an associated
-	 * connection we can flush that out before we process the packet.
-	 */
-	if (unlikely(flush_on_find)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
-		DEBUG_TRACE("flush on find\n");
-		return 0;
-	}
-
-#ifdef CONFIG_XFRM
-	/*
-	 * We can't accelerate the flow on this direction, just let it go
-	 * through the slow path.
-	 */
-	if (unlikely(!cm->flow_accel)) {
-		rcu_read_unlock();
-		this_cpu_inc(si->stats_pcpu->packets_not_forwarded64);
-		return 0;
-	}
-#endif
-
-	/*
-	 * Does our TTL allow forwarding?
-	 */
-	ttl = iph->ttl;
-	if (unlikely(ttl < 2)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-		rcu_read_unlock();
-
-		DEBUG_TRACE("ttl too low\n");
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_SMALL_TTL);
-		return 0;
-	}
-
-	/*
-	 * If our packet is larger than the MTU of the transmit interface then
-	 * we can't forward it easily.
-	 */
-	if (unlikely(len > cm->xmit_dev_mtu)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("larger than mtu\n");
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_NEEDS_FRAGMENTATION);
-		return 0;
-	}
-
-	/*
-	 * From this point on we're good to modify the packet.
-	 */
-
-	/*
-	 * Check if skb was cloned. If it was, unshare it. Because
-	 * the data area is going to be written in this path and we don't want to
-	 * change the cloned skb's data section.
-	 */
-	if (unlikely(skb_cloned(skb))) {
-		DEBUG_TRACE("%px: skb is a cloned skb\n", skb);
-		skb = skb_unshare(skb, GFP_ATOMIC);
-		if (!skb) {
-			DEBUG_WARN("Failed to unshare the cloned skb\n");
-			rcu_read_unlock();
-			return 0;
-		}
-
-		/*
-		 * Update the iph and udph pointers with the unshared skb's data area.
-		 */
-		iph = (struct iphdr *)skb->data;
-		udph = (struct udphdr *)(skb->data + ihl);
-	}
-
-	/*
-	 * Update DSCP
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
-		iph->tos = (iph->tos & SFE_IPV4_DSCP_MASK) | cm->dscp;
-	}
-
-	/*
-	 * Decrement our TTL.
-	 */
-	iph->ttl = ttl - 1;
-
-	/*
-	 * Do we have to perform translations of the source address/port?
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC)) {
-		u16 udp_csum;
-
-		iph->saddr = cm->xlate_src_ip;
-		udph->source = cm->xlate_src_port;
-
-		/*
-		 * Do we have a non-zero UDP checksum?  If we do then we need
-		 * to update it.
-		 */
-		udp_csum = udph->check;
-		if (likely(udp_csum)) {
-			u32 sum;
-
-			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-				sum = udp_csum + cm->xlate_src_partial_csum_adjustment;
-			} else {
-				sum = udp_csum + cm->xlate_src_csum_adjustment;
-			}
-
-			sum = (sum & 0xffff) + (sum >> 16);
-			udph->check = (u16)sum;
-		}
-	}
-
-	/*
-	 * Do we have to perform translations of the destination address/port?
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST)) {
-		u16 udp_csum;
-
-		iph->daddr = cm->xlate_dest_ip;
-		udph->dest = cm->xlate_dest_port;
-
-		/*
-		 * Do we have a non-zero UDP checksum?  If we do then we need
-		 * to update it.
-		 */
-		udp_csum = udph->check;
-		if (likely(udp_csum)) {
-			u32 sum;
-
-			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-				sum = udp_csum + cm->xlate_dest_partial_csum_adjustment;
-			} else {
-				sum = udp_csum + cm->xlate_dest_csum_adjustment;
-			}
-
-			sum = (sum & 0xffff) + (sum >> 16);
-			udph->check = (u16)sum;
-		}
-	}
-
-	/*
-	 * Replace the IP checksum.
-	 */
-	iph->check = sfe_ipv4_gen_ip_csum(iph);
-
-	/*
-	 * Update traffic stats.
-	 */
-	atomic_inc(&cm->rx_packet_count);
-	atomic_add(len, &cm->rx_byte_count);
-
-	xmit_dev = cm->xmit_dev;
-	skb->dev = xmit_dev;
-
-	/*
-	 * Check to see if we need to write a header.
-	 */
-	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
-		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
-			dev_hard_header(skb, xmit_dev, ETH_P_IP,
-					cm->xmit_dest_mac, cm->xmit_src_mac, len);
-		} else {
-			/*
-			 * For the simple case we write this really fast.
-			 */
-			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
-			eth->h_proto = htons(ETH_P_IP);
-			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
-			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
-		}
-	}
-
-	/*
-	 * Update priority of skb.
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK)) {
-		skb->priority = cm->priority;
-	}
-
-	/*
-	 * Mark outgoing packet.
-	 */
-	skb->mark = cm->connection->mark;
-	if (skb->mark) {
-		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
-	}
-
-	rcu_read_unlock();
-
-	this_cpu_inc(si->stats_pcpu->packets_forwarded64);
-
-	/*
-	 * We're going to check for GSO flags when we transmit the packet so
-	 * start fetching the necessary cache line now.
-	 */
-	prefetch(skb_shinfo(skb));
-
-	/*
-	 * Mark that this packet has been fast forwarded.
-	 */
-	skb->fast_forwarded = 1;
-
-	/*
-	 * Send the packet on its way.
-	 */
-	dev_queue_xmit(skb);
-
-	return 1;
-}
-
-/*
- * sfe_ipv4_process_tcp_option_sack()
- *	Parse TCP SACK option and update ack according
- */
-static bool sfe_ipv4_process_tcp_option_sack(const struct tcphdr *th, const u32 data_offs,
-					     u32 *ack)
-{
-	u32 length = sizeof(struct tcphdr);
-	u8 *ptr = (u8 *)th + length;
-
-	/*
-	 * Ignore processing if TCP packet has only TIMESTAMP option.
-	 */
-	if (likely(data_offs == length + TCPOLEN_TIMESTAMP + 1 + 1)
-	    && likely(ptr[0] == TCPOPT_NOP)
-	    && likely(ptr[1] == TCPOPT_NOP)
-	    && likely(ptr[2] == TCPOPT_TIMESTAMP)
-	    && likely(ptr[3] == TCPOLEN_TIMESTAMP)) {
-		return true;
-	}
-
-	/*
-	 * TCP options. Parse SACK option.
-	 */
-	while (length < data_offs) {
-		u8 size;
-		u8 kind;
-
-		ptr = (u8 *)th + length;
-		kind = *ptr;
-
-		/*
-		 * NOP, for padding
-		 * Not in the switch because to fast escape and to not calculate size
-		 */
-		if (kind == TCPOPT_NOP) {
-			length++;
-			continue;
-		}
-
-		if (kind == TCPOPT_SACK) {
-			u32 sack = 0;
-			u8 re = 1 + 1;
-
-			size = *(ptr + 1);
-			if ((size < (1 + 1 + TCPOLEN_SACK_PERBLOCK))
-			    || ((size - (1 + 1)) % (TCPOLEN_SACK_PERBLOCK))
-			    || (size > (data_offs - length))) {
-				return false;
-			}
-
-			re += 4;
-			while (re < size) {
-				u32 sack_re;
-				u8 *sptr = ptr + re;
-				sack_re = (sptr[0] << 24) | (sptr[1] << 16) | (sptr[2] << 8) | sptr[3];
-				if (sack_re > sack) {
-					sack = sack_re;
-				}
-				re += TCPOLEN_SACK_PERBLOCK;
-			}
-			if (sack > *ack) {
-				*ack = sack;
-			}
-			length += size;
-			continue;
-		}
-		if (kind == TCPOPT_EOL) {
-			return true;
-		}
-		size = *(ptr + 1);
-		if (size < 2) {
-			return false;
-		}
-		length += size;
-	}
-
-	return true;
-}
-
-/*
- * sfe_ipv4_recv_tcp()
- *	Handle TCP packet receives and forwarding.
- */
-static int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find)
-{
-	struct tcphdr *tcph;
-	__be32 src_ip;
-	__be32 dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-	struct sfe_ipv4_connection_match *cm;
-	struct sfe_ipv4_connection_match *counter_cm;
-	u8 ttl;
-	u32 flags;
-	struct net_device *xmit_dev;
-	bool ret;
-
-	/*
-	 * Is our packet too short to contain a valid UDP header?
-	 */
-	if (unlikely(!pskb_may_pull(skb, (sizeof(struct tcphdr) + ihl)))) {
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_HEADER_INCOMPLETE);
-		DEBUG_TRACE("packet too short for TCP header\n");
-		return 0;
-	}
-
-	/*
-	 * Read the IP address and port information.  Read the IP header data first
-	 * because we've almost certainly got that in the cache.  We may not yet have
-	 * the TCP header cached though so allow more time for any prefetching.
-	 */
-	src_ip = iph->saddr;
-	dest_ip = iph->daddr;
-
-	tcph = (struct tcphdr *)(skb->data + ihl);
-	src_port = tcph->source;
-	dest_port = tcph->dest;
-	flags = tcp_flag_word(tcph);
-
-	rcu_read_lock();
-
-	/*
-	 * Look for a connection match.
-	 */
-#ifdef CONFIG_NF_FLOW_COOKIE
-	cm = si->sfe_flow_cookie_table[skb->flow_cookie & SFE_FLOW_COOKIE_MASK].match;
-	if (unlikely(!cm)) {
-		cm = sfe_ipv4_find_sfe_ipv4_connection_match_rcu(si, dev, IPPROTO_TCP, src_ip, src_port, dest_ip, dest_port);
-	}
-#else
-	cm = sfe_ipv4_find_sfe_ipv4_connection_match_rcu(si, dev, IPPROTO_TCP, src_ip, src_port, dest_ip, dest_port);
-#endif
-	if (unlikely(!cm)) {
-		/*
-		 * We didn't get a connection but as TCP is connection-oriented that
-		 * may be because this is a non-fast connection (not running established).
-		 * For diagnostic purposes we differentiate this here.
-		 */
-		if (likely((flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK)) == TCP_FLAG_ACK)) {
-
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_NO_CONNECTION_FAST_FLAGS);
-			DEBUG_TRACE("no connection found - fast flags\n");
-			return 0;
-		}
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_NO_CONNECTION_SLOW_FLAGS);
-		DEBUG_TRACE("no connection found - slow flags: 0x%x\n",
-			    flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK));
-		return 0;
-	}
-
-	/*
-	 * If our packet has beern marked as "flush on find" we can't actually
-	 * forward it in the fast path, but now that we've found an associated
-	 * connection we can flush that out before we process the packet.
-	 */
-	if (unlikely(flush_on_find)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("flush on find\n");
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-
-		rcu_read_unlock();
-
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
-		return 0;
-	}
-
-#ifdef CONFIG_XFRM
-	/*
-	 * We can't accelerate the flow on this direction, just let it go
-	 * through the slow path.
-	 */
-	if (unlikely(!cm->flow_accel)) {
-		rcu_read_unlock();
-		this_cpu_inc(si->stats_pcpu->packets_not_forwarded64);
-		return 0;
-	}
-#endif
-	/*
-	 * Does our TTL allow forwarding?
-	 */
-	ttl = iph->ttl;
-	if (unlikely(ttl < 2)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("ttl too low\n");
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_TTL);
-		return 0;
-	}
-
-	/*
-	 * If our packet is larger than the MTU of the transmit interface then
-	 * we can't forward it easily.
-	 */
-	if (unlikely((len > cm->xmit_dev_mtu) && !skb_is_gso(skb))) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("larger than mtu\n");
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
-		return 0;
-	}
-
-	/*
-	 * Look at our TCP flags.  Anything missing an ACK or that has RST, SYN or FIN
-	 * set is not a fast path packet.
-	 */
-	if (unlikely((flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK)) != TCP_FLAG_ACK)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("TCP flags: 0x%x are not fast\n",
-			    flags & (TCP_FLAG_SYN | TCP_FLAG_RST | TCP_FLAG_FIN | TCP_FLAG_ACK));
-		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_FLAGS);
-		return 0;
-	}
-
-	counter_cm = cm->counter_match;
-
-	/*
-	 * Are we doing sequence number checking?
-	 */
-	if (likely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_NO_SEQ_CHECK))) {
-		u32 seq;
-		u32 ack;
-		u32 sack;
-		u32 data_offs;
-		u32 end;
-		u32 left_edge;
-		u32 scaled_win;
-		u32 max_end;
-
-		/*
-		 * Is our sequence fully past the right hand edge of the window?
-		 */
-		seq = ntohl(tcph->seq);
-		if (unlikely((s32)(seq - (cm->protocol_state.tcp.max_end + 1)) > 0)) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("seq: %u exceeds right edge: %u\n",
-				    seq, cm->protocol_state.tcp.max_end + 1);
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SEQ_EXCEEDS_RIGHT_EDGE);
-			return 0;
-		}
-
-		/*
-		 * Check that our TCP data offset isn't too short.
-		 */
-		data_offs = tcph->doff << 2;
-		if (unlikely(data_offs < sizeof(struct tcphdr))) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("TCP data offset: %u, too small\n", data_offs);
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_DATA_OFFS);
-			return 0;
-		}
-
-		/*
-		 * Update ACK according to any SACK option.
-		 */
-		ack = ntohl(tcph->ack_seq);
-		sack = ack;
-		if (unlikely(!sfe_ipv4_process_tcp_option_sack(tcph, data_offs, &sack))) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("TCP option SACK size is wrong\n");
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_BAD_SACK);
-			return 0;
-		}
-
-		/*
-		 * Check that our TCP data offset isn't past the end of the packet.
-		 */
-		data_offs += sizeof(struct iphdr);
-		if (unlikely(len < data_offs)) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("TCP data offset: %u, past end of packet: %u\n",
-				    data_offs, len);
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_BIG_DATA_OFFS);
-			return 0;
-		}
-
-		end = seq + len - data_offs;
-
-		/*
-		 * Is our sequence fully before the left hand edge of the window?
-		 */
-		if (unlikely((s32)(end - (cm->protocol_state.tcp.end
-						- counter_cm->protocol_state.tcp.max_win - 1)) < 0)) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("seq: %u before left edge: %u\n",
-				    end, cm->protocol_state.tcp.end - counter_cm->protocol_state.tcp.max_win - 1);
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SEQ_BEFORE_LEFT_EDGE);
-			return 0;
-		}
-
-		/*
-		 * Are we acking data that is to the right of what has been sent?
-		 */
-		if (unlikely((s32)(sack - (counter_cm->protocol_state.tcp.end + 1)) > 0)) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("ack: %u exceeds right edge: %u\n",
-				    sack, counter_cm->protocol_state.tcp.end + 1);
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_ACK_EXCEEDS_RIGHT_EDGE);
-			return 0;
-		}
-
-		/*
-		 * Is our ack too far before the left hand edge of the window?
-		 */
-		left_edge = counter_cm->protocol_state.tcp.end
-			    - cm->protocol_state.tcp.max_win
-			    - SFE_IPV4_TCP_MAX_ACK_WINDOW
-			    - 1;
-		if (unlikely((s32)(sack - left_edge) < 0)) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("ack: %u before left edge: %u\n", sack, left_edge);
-			if (ret) {
-				sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
-			rcu_read_unlock();
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_ACK_BEFORE_LEFT_EDGE);
-			return 0;
-		}
-
-		/*
-		 * Have we just seen the largest window size yet for this connection?  If yes
-		 * then we need to record the new value.
-		 */
-		scaled_win = ntohs(tcph->window) << cm->protocol_state.tcp.win_scale;
-		scaled_win += (sack - ack);
-		if (unlikely(cm->protocol_state.tcp.max_win < scaled_win)) {
-			cm->protocol_state.tcp.max_win = scaled_win;
-		}
-
-		/*
-		 * If our sequence and/or ack numbers have advanced then record the new state.
-		 */
-		if (likely((s32)(end - cm->protocol_state.tcp.end) >= 0)) {
-			cm->protocol_state.tcp.end = end;
-		}
-
-		max_end = sack + scaled_win;
-		if (likely((s32)(max_end - counter_cm->protocol_state.tcp.max_end) >= 0)) {
-			counter_cm->protocol_state.tcp.max_end = max_end;
-		}
-	}
-
-	/*
-	 * From this point on we're good to modify the packet.
-	 */
-
-	/*
-	 * Check if skb was cloned. If it was, unshare it. Because
-	 * the data area is going to be written in this path and we don't want to
-	 * change the cloned skb's data section.
-	 */
-	if (unlikely(skb_cloned(skb))) {
-		DEBUG_TRACE("%px: skb is a cloned skb\n", skb);
-		skb = skb_unshare(skb, GFP_ATOMIC);
-		if (!skb) {
-			DEBUG_WARN("Failed to unshare the cloned skb\n");
-			rcu_read_unlock();
-			return 0;
-		}
-
-		/*
-		 * Update the iph and tcph pointers with the unshared skb's data area.
-		 */
-		iph = (struct iphdr *)skb->data;
-		tcph = (struct tcphdr *)(skb->data + ihl);
-	}
-
-	/*
-	 * Update DSCP
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
-		iph->tos = (iph->tos & SFE_IPV4_DSCP_MASK) | cm->dscp;
-	}
-
-	/*
-	 * Decrement our TTL.
-	 */
-	iph->ttl = ttl - 1;
-
-	/*
-	 * Do we have to perform translations of the source address/port?
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC)) {
-		u16 tcp_csum;
-		u32 sum;
-
-		iph->saddr = cm->xlate_src_ip;
-		tcph->source = cm->xlate_src_port;
-
-		/*
-		 * Do we have a non-zero UDP checksum?  If we do then we need
-		 * to update it.
-		 */
-		tcp_csum = tcph->check;
-		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-			sum = tcp_csum + cm->xlate_src_partial_csum_adjustment;
-		} else {
-			sum = tcp_csum + cm->xlate_src_csum_adjustment;
-		}
-
-		sum = (sum & 0xffff) + (sum >> 16);
-		tcph->check = (u16)sum;
-	}
-
-	/*
-	 * Do we have to perform translations of the destination address/port?
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_DEST)) {
-		u16 tcp_csum;
-		u32 sum;
-
-		iph->daddr = cm->xlate_dest_ip;
-		tcph->dest = cm->xlate_dest_port;
-
-		/*
-		 * Do we have a non-zero UDP checksum?  If we do then we need
-		 * to update it.
-		 */
-		tcp_csum = tcph->check;
-		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-			sum = tcp_csum + cm->xlate_dest_partial_csum_adjustment;
-		} else {
-			sum = tcp_csum + cm->xlate_dest_csum_adjustment;
-		}
-
-		sum = (sum & 0xffff) + (sum >> 16);
-		tcph->check = (u16)sum;
-	}
-
-	/*
-	 * Replace the IP checksum.
-	 */
-	iph->check = sfe_ipv4_gen_ip_csum(iph);
-
-	/*
-	 * Update traffic stats.
-	 */
-	atomic_inc(&cm->rx_packet_count);
-	atomic_add(len, &cm->rx_byte_count);
-
-	xmit_dev = cm->xmit_dev;
-	skb->dev = xmit_dev;
-
-	/*
-	 * Check to see if we need to write a header.
-	 */
-	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
-		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
-			dev_hard_header(skb, xmit_dev, ETH_P_IP,
-					cm->xmit_dest_mac, cm->xmit_src_mac, len);
-		} else {
-			/*
-			 * For the simple case we write this really fast.
-			 */
-			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
-
-			eth->h_proto = htons(ETH_P_IP);
-
-			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
-			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
-		}
-	}
-
-	/*
-	 * Update priority of skb.
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PRIORITY_REMARK)) {
-		skb->priority = cm->priority;
-	}
-
-	/*
-	 * Mark outgoing packet
-	 */
-	skb->mark = cm->connection->mark;
-	if (skb->mark) {
-		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
-	}
-
-	rcu_read_unlock();
-
-	this_cpu_inc(si->stats_pcpu->packets_forwarded64);
-
-	/*
-	 * We're going to check for GSO flags when we transmit the packet so
-	 * start fetching the necessary cache line now.
-	 */
-	prefetch(skb_shinfo(skb));
-
-	/*
-	 * Mark that this packet has been fast forwarded.
-	 */
-	skb->fast_forwarded = 1;
-
-	/*
-	 * Send the packet on its way.
-	 */
-	dev_queue_xmit(skb);
-
-	return 1;
-}
-
-/*
- * sfe_ipv4_recv_icmp()
- *	Handle ICMP packet receives.
- *
- * ICMP packets aren't handled as a "fast path" and always have us process them
- * through the default Linux stack.  What we do need to do is look for any errors
- * about connections we are handling in the fast path.  If we find any such
- * connections then we want to flush their state so that the ICMP error path
- * within Linux has all of the correct state should it need it.
- */
-static int sfe_ipv4_recv_icmp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			      unsigned int len, struct iphdr *iph, unsigned int ihl)
-{
-	struct icmphdr *icmph;
-	struct iphdr *icmp_iph;
-	unsigned int icmp_ihl_words;
-	unsigned int icmp_ihl;
-	u32 *icmp_trans_h;
-	struct udphdr *icmp_udph;
-	struct tcphdr *icmp_tcph;
-	__be32 src_ip;
-	__be32 dest_ip;
-	__be16 src_port;
-	__be16 dest_port;
-	struct sfe_ipv4_connection_match *cm;
-	struct sfe_ipv4_connection *c;
-	u32 pull_len = sizeof(struct icmphdr) + ihl;
-	bool ret;
-
-	/*
-	 * Is our packet too short to contain a valid ICMP header?
-	 */
-	len -= ihl;
-	if (!pskb_may_pull(skb, pull_len)) {
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_HEADER_INCOMPLETE);
-
-		DEBUG_TRACE("packet too short for ICMP header\n");
-		return 0;
-	}
-
-	/*
-	 * We only handle "destination unreachable" and "time exceeded" messages.
-	 */
-	icmph = (struct icmphdr *)(skb->data + ihl);
-	if ((icmph->type != ICMP_DEST_UNREACH)
-	    && (icmph->type != ICMP_TIME_EXCEEDED)) {
-
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_UNHANDLED_TYPE);
-		DEBUG_TRACE("unhandled ICMP type: 0x%x\n", icmph->type);
-		return 0;
-	}
-
-	/*
-	 * Do we have the full embedded IP header?
-	 */
-	len -= sizeof(struct icmphdr);
-	pull_len += sizeof(struct iphdr);
-	if (!pskb_may_pull(skb, pull_len)) {
-
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_HEADER_INCOMPLETE);
-		DEBUG_TRACE("Embedded IP header not complete\n");
-		return 0;
-	}
-
-	/*
-	 * Is our embedded IP version wrong?
-	 */
-	icmp_iph = (struct iphdr *)(icmph + 1);
-	if (unlikely(icmp_iph->version != 4)) {
-
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_NON_V4);
-		DEBUG_TRACE("IP version: %u\n", icmp_iph->version);
-		return 0;
-	}
-
-	/*
-	 * Do we have the full embedded IP header, including any options?
-	 */
-	icmp_ihl_words = icmp_iph->ihl;
-	icmp_ihl = icmp_ihl_words << 2;
-	pull_len += icmp_ihl - sizeof(struct iphdr);
-	if (!pskb_may_pull(skb, pull_len)) {
-
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_IP_OPTIONS_INCOMPLETE);
-		DEBUG_TRACE("Embedded header not large enough for IP options\n");
-		return 0;
-	}
-
-	len -= icmp_ihl;
-	icmp_trans_h = ((u32 *)icmp_iph) + icmp_ihl_words;
-
-	/*
-	 * Handle the embedded transport layer header.
-	 */
-	switch (icmp_iph->protocol) {
-	case IPPROTO_UDP:
-		/*
-		 * We should have 8 bytes of UDP header - that's enough to identify
-		 * the connection.
-		 */
-		pull_len += 8;
-		if (!pskb_may_pull(skb, pull_len)) {
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_UDP_HEADER_INCOMPLETE);
-			DEBUG_TRACE("Incomplete embedded UDP header\n");
-			return 0;
-		}
-
-		icmp_udph = (struct udphdr *)icmp_trans_h;
-		src_port = icmp_udph->source;
-		dest_port = icmp_udph->dest;
-		break;
-
-	case IPPROTO_TCP:
-		/*
-		 * We should have 8 bytes of TCP header - that's enough to identify
-		 * the connection.
-		 */
-		pull_len += 8;
-		if (!pskb_may_pull(skb, pull_len)) {
-			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_TCP_HEADER_INCOMPLETE);
-			DEBUG_TRACE("Incomplete embedded TCP header\n");
-			return 0;
-		}
-
-		icmp_tcph = (struct tcphdr *)icmp_trans_h;
-		src_port = icmp_tcph->source;
-		dest_port = icmp_tcph->dest;
-		break;
-
-	default:
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_IPV4_UNHANDLED_PROTOCOL);
-		DEBUG_TRACE("Unhandled embedded IP protocol: %u\n", icmp_iph->protocol);
-		return 0;
-	}
-
-	src_ip = icmp_iph->saddr;
-	dest_ip = icmp_iph->daddr;
-
-	rcu_read_lock();
-
-	/*
-	 * Look for a connection match.  Note that we reverse the source and destination
-	 * here because our embedded message contains a packet that was sent in the
-	 * opposite direction to the one in which we just received it.  It will have
-	 * been sent on the interface from which we received it though so that's still
-	 * ok to use.
-	 */
-	cm = sfe_ipv4_find_sfe_ipv4_connection_match_rcu(si, dev, icmp_iph->protocol, dest_ip, dest_port, src_ip, src_port);
-	if (unlikely(!cm)) {
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_NO_CONNECTION);
-		DEBUG_TRACE("no connection found\n");
-		return 0;
-	}
-
-	/*
-	 * We found a connection so now remove it from the connection list and flush
-	 * its state.
-	 */
-	c = cm->connection;
-	spin_lock_bh(&si->lock);
-	ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
-	spin_unlock_bh(&si->lock);
-
-	if (ret) {
-		sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_FLUSH);
-	}
-	rcu_read_unlock();
-	sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_ICMP_FLUSHED_CONNECTION);
-	return 0;
 }
 
 /*
@@ -1943,7 +892,7 @@ void sfe_ipv4_update_rule(struct sfe_ipv4_rule_create_msg *msg)
 
 	spin_lock_bh(&si->lock);
 
-	c = sfe_ipv4_find_sfe_ipv4_connection(si,
+	c = sfe_ipv4_find_connection(si,
 					      msg->tuple.protocol,
 					      msg->tuple.flow_ip,
 					      msg->tuple.flow_ident,
@@ -2038,7 +987,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	 * Check to see if there is already a flow that matches the rule we're
 	 * trying to create.  If there is then we can't create a new one.
 	 */
-	c_old = sfe_ipv4_find_sfe_ipv4_connection(si,
+	c_old = sfe_ipv4_find_connection(si,
 						  msg->tuple.protocol,
 						  msg->tuple.flow_ip,
 						  msg->tuple.flow_ident,
@@ -2259,7 +1208,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 
 	sfe_ipv4_connection_match_compute_translations(original_cm);
 	sfe_ipv4_connection_match_compute_translations(reply_cm);
-	sfe_ipv4_insert_sfe_ipv4_connection(si, c);
+	sfe_ipv4_insert_connection(si, c);
 
 	spin_unlock_bh(&si->lock);
 
@@ -2296,7 +1245,7 @@ void sfe_ipv4_destroy_rule(struct sfe_ipv4_rule_destroy_msg *msg)
 	 * Check to see if we have a flow that matches the rule we're trying
 	 * to destroy.  If there isn't then we can't destroy it.
 	 */
-	c = sfe_ipv4_find_sfe_ipv4_connection(si, tuple->protocol, tuple->flow_ip, tuple->flow_ident,
+	c = sfe_ipv4_find_connection(si, tuple->protocol, tuple->flow_ip, tuple->flow_ident,
 					      tuple->return_ip, tuple->return_ident);
 	if (!c) {
 		spin_unlock_bh(&si->lock);
@@ -2311,11 +1260,11 @@ void sfe_ipv4_destroy_rule(struct sfe_ipv4_rule_destroy_msg *msg)
 	/*
 	 * Remove our connection details from the hash tables.
 	 */
-	ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
+	ret = sfe_ipv4_remove_connection(si, c);
 	spin_unlock_bh(&si->lock);
 
 	if (ret) {
-		sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_DESTROY);
+		sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_DESTROY);
 	}
 
 	DEBUG_INFO("connection destroyed - p: %d, s: %pI4:%u, d: %pI4:%u\n",
@@ -2388,14 +1337,14 @@ another_round:
 	}
 
 	if (c) {
-		ret = sfe_ipv4_remove_sfe_ipv4_connection(si, c);
+		ret = sfe_ipv4_remove_connection(si, c);
 	}
 
 	spin_unlock_bh(&si->lock);
 
 	if (c) {
 		if (ret) {
-			sfe_ipv4_flush_sfe_ipv4_connection(si, c, SFE_SYNC_REASON_DESTROY);
+			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_DESTROY);
 		}
 		goto another_round;
 	}
@@ -2459,7 +1408,7 @@ static void sfe_ipv4_periodic_sync(struct work_struct *work)
 
 		quota--;
 
-		sfe_ipv4_gen_sync_sfe_ipv4_connection(si, c, &sis, SFE_SYNC_REASON_STATS, now_jiffies);
+		sfe_ipv4_gen_sync_connection(si, c, &sis, SFE_SYNC_REASON_STATS, now_jiffies);
 
 		si->wc_next = c->all_connections_next;
 
@@ -3057,8 +2006,8 @@ int sfe_ipv4_init(void)
 	/*
 	 * Create sys/sfe_ipv4
 	 */
-	si->sys_sfe_ipv4 = kobject_create_and_add("sfe_ipv4", NULL);
-	if (!si->sys_sfe_ipv4) {
+	si->sys_ipv4 = kobject_create_and_add("sfe_ipv4", NULL);
+	if (!si->sys_ipv4) {
 		DEBUG_ERROR("failed to register sfe_ipv4\n");
 		goto exit1;
 	}
@@ -3066,21 +2015,20 @@ int sfe_ipv4_init(void)
 	/*
 	 * Create files, one for each parameter supported by this module.
 	 */
-	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
+	result = sysfs_create_file(si->sys_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
 		goto exit2;
 	}
 
-	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_cpu_attr.attr);
+	result = sysfs_create_file(si->sys_ipv4, &sfe_ipv4_cpu_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register debug dev file: %d\n", result);
 		goto exit3;
 	}
 
-
 #ifdef CONFIG_NF_FLOW_COOKIE
-	result = sysfs_create_file(si->sys_sfe_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
+	result = sysfs_create_file(si->sys_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
 	if (result) {
 		DEBUG_ERROR("failed to register flow cookie enable file: %d\n", result);
 		goto exit4;
@@ -3110,16 +2058,16 @@ int sfe_ipv4_init(void)
 
 exit5:
 #ifdef CONFIG_NF_FLOW_COOKIE
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
+	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
 
 exit4:
 #endif /* CONFIG_NF_FLOW_COOKIE */
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_cpu_attr.attr);
+	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_cpu_attr.attr);
 exit3:
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
+	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_debug_dev_attr.attr);
 
 exit2:
-	kobject_put(si->sys_sfe_ipv4);
+	kobject_put(si->sys_ipv4);
 
 exit1:
 	free_percpu(si->stats_pcpu);
@@ -3146,12 +2094,12 @@ void sfe_ipv4_exit(void)
 	unregister_chrdev(si->debug_dev, "sfe_ipv4");
 
 #ifdef CONFIG_NF_FLOW_COOKIE
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
+	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
 #endif /* CONFIG_NF_FLOW_COOKIE */
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_debug_dev_attr.attr);
-	sysfs_remove_file(si->sys_sfe_ipv4, &sfe_ipv4_cpu_attr.attr);
+	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_debug_dev_attr.attr);
+	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_cpu_attr.attr);
 
-	kobject_put(si->sys_sfe_ipv4);
+	kobject_put(si->sys_ipv4);
 
 	free_percpu(si->stats_pcpu);
 

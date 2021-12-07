@@ -296,7 +296,7 @@ struct sfe_ipv6 {
 	/*
 	 * Control state.
 	 */
-	struct kobject *sys_sfe_ipv6;	/* sysfs linkage */
+	struct kobject *sys_ipv6;	/* sysfs linkage */
 	int debug_dev;			/* Major number of the debug char device */
 	u32 debug_read_seq;		/* sequence number for debug dump */
 };
@@ -328,6 +328,44 @@ struct sfe_ipv6_debug_xml_write_state {
 
 typedef bool (*sfe_ipv6_debug_xml_write_method_t)(struct sfe_ipv6 *si, char *buffer, char *msg, size_t *length,
 						  int *total_read, struct sfe_ipv6_debug_xml_write_state *ws);
+
+/*
+ * sfe_ipv6_is_ext_hdr()
+ *	check if we recognize ipv6 extension header
+ */
+static inline bool sfe_ipv6_is_ext_hdr(u8 hdr)
+{
+	return (hdr == NEXTHDR_HOP) ||
+		(hdr == NEXTHDR_ROUTING) ||
+		(hdr == NEXTHDR_FRAGMENT) ||
+		(hdr == NEXTHDR_AUTH) ||
+		(hdr == NEXTHDR_DEST) ||
+		(hdr == NEXTHDR_MOBILITY);
+}
+
+/*
+ * sfe_ipv6_change_dsfield()
+ *	change dscp field in IPv6 packet
+ */
+static inline void sfe_ipv6_change_dsfield(struct ipv6hdr *iph, u8 dscp)
+{
+	__be16 *p = (__be16 *)iph;
+
+	*p = ((*p & htons(SFE_IPV6_DSCP_MASK)) | htons((u16)dscp << 4));
+}
+
+void sfe_ipv6_exception_stats_inc(struct sfe_ipv6 *si, enum sfe_ipv6_exception_events reason);
+
+struct sfe_ipv6_connection_match *
+sfe_ipv6_find_connection_match_rcu(struct sfe_ipv6 *si, struct net_device *dev, u8 protocol,
+					struct sfe_ipv6_addr *src_ip, __be16 src_port,
+					struct sfe_ipv6_addr *dest_ip, __be16 dest_port);
+
+bool sfe_ipv6_remove_connection(struct sfe_ipv6 *si, struct sfe_ipv6_connection *c);
+
+void sfe_ipv6_flush_connection(struct sfe_ipv6 *si,
+				      struct sfe_ipv6_connection *c,
+				      sfe_sync_reason_t reason);
 
 void sfe_ipv6_exit(void);
 int sfe_ipv6_init(void);

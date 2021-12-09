@@ -45,6 +45,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	u8 ttl;
 	struct net_device *xmit_dev;
 	bool ret;
+	bool hw_csum;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
@@ -197,6 +198,13 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	iph->ttl = ttl - 1;
 
 	/*
+	 * Enable HW csum if rx checksum is verified and xmit interface is CSUM offload capable.
+	 * Note: If L4 csum at Rx was found to be incorrect, we (router) should use incremental L4 checksum here
+	 * so that HW does not re-calculate/replace the L4 csum
+	 */
+	hw_csum = !!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD) && (skb->ip_summed == CHECKSUM_UNNECESSARY);
+
+	/*
 	 * Do we have to perform translations of the source address/port?
 	 */
 	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_XLATE_SRC)) {
@@ -209,18 +217,20 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		 * Do we have a non-zero UDP checksum?  If we do then we need
 		 * to update it.
 		 */
-		udp_csum = udph->check;
-		if (likely(udp_csum)) {
-			u32 sum;
+		if (unlikely(!hw_csum)) {
+			udp_csum = udph->check;
+			if (likely(udp_csum)) {
+				u32 sum;
 
-			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-				sum = udp_csum + cm->xlate_src_partial_csum_adjustment;
-			} else {
-				sum = udp_csum + cm->xlate_src_csum_adjustment;
+				if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+					sum = udp_csum + cm->xlate_src_partial_csum_adjustment;
+				} else {
+					sum = udp_csum + cm->xlate_src_csum_adjustment;
+				}
+
+				sum = (sum & 0xffff) + (sum >> 16);
+				udph->check = (u16)sum;
 			}
-
-			sum = (sum & 0xffff) + (sum >> 16);
-			udph->check = (u16)sum;
 		}
 	}
 
@@ -237,25 +247,38 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		 * Do we have a non-zero UDP checksum?  If we do then we need
 		 * to update it.
 		 */
-		udp_csum = udph->check;
-		if (likely(udp_csum)) {
-			u32 sum;
+		if (unlikely(!hw_csum)) {
+			udp_csum = udph->check;
+			if (likely(udp_csum)) {
+				u32 sum;
 
-			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-				sum = udp_csum + cm->xlate_dest_partial_csum_adjustment;
-			} else {
-				sum = udp_csum + cm->xlate_dest_csum_adjustment;
+				/*
+				 * TODO: Use a common API for below incremental checksum calculation
+				 * for IPv4/IPv6 UDP/TCP
+				 */
+				if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+					sum = udp_csum + cm->xlate_dest_partial_csum_adjustment;
+				} else {
+					sum = udp_csum + cm->xlate_dest_csum_adjustment;
+				}
+
+				sum = (sum & 0xffff) + (sum >> 16);
+				udph->check = (u16)sum;
 			}
-
-			sum = (sum & 0xffff) + (sum >> 16);
-			udph->check = (u16)sum;
 		}
 	}
 
 	/*
-	 * Replace the IP checksum.
+	 * If HW checksum offload is not possible, full L3 checksum and incremental L4 checksum
+	 * are used to update the packet. Setting ip_summed to CHECKSUM_UNNECESSARY ensures checksum is
+	 * not recalculated further in packet path.
 	 */
-	iph->check = sfe_ipv4_gen_ip_csum(iph);
+	if (likely(hw_csum)) {
+		skb->ip_summed = CHECKSUM_PARTIAL;
+	} else {
+		iph->check = sfe_ipv4_gen_ip_csum(iph);
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+	}
 
 	/*
 	 * Update traffic stats.

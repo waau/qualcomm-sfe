@@ -53,6 +53,8 @@ struct sfe_ipv4_tcp_connection_match {
 					/* remark priority of SKB */
 #define SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK (1<<6)
 					/* remark DSCP of packet */
+#define SFE_IPV4_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD (1<<7)
+					/* checksum offload.*/
 
 /*
  * IPv4 connection matching structure.

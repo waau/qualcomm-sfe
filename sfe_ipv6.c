@@ -1075,6 +1075,18 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 		original_cm->flow_accel = 1;
 	}
 #endif
+	/*
+	 * If l2_features are disabled and flow uses l2 features such as macvlan/bridge/pppoe/vlan,
+	 * bottom interfaces are expected to be disabled in the flow rule and always top interfaces
+	 * are used. In such cases, do not use HW csum offload. csum offload is used only when we
+	 * are sending directly to the destination interface that supports it.
+	 */
+	if (likely(dest_dev->features & NETIF_F_HW_CSUM)) {
+		if ((msg->conn_rule.return_top_interface_num == msg->conn_rule.return_interface_num) ||
+			(msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_RETURN_BOTTOM_INTERFACE)) {
+			 original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD;
+		}
+	}
 
 	/*
 	 * For the non-arp interface, we don't write L2 HDR.
@@ -1148,6 +1160,19 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 		reply_cm->flow_accel = 1;
 	}
 #endif
+	/*
+	 * If l2_features are disabled and flow uses l2 features such as macvlan/bridge/pppoe/vlan,
+	 * bottom interfaces are expected to be disabled in the flow rule and always top interfaces
+	 * are used. In such cases, do not use HW csum offload. csum offload is used only when we
+	 * are sending directly to the destination interface that supports it.
+	 */
+	if (likely(src_dev->features & NETIF_F_HW_CSUM)) {
+		if ((msg->conn_rule.flow_top_interface_num == msg->conn_rule.flow_interface_num) ||
+			(msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_FLOW_BOTTOM_INTERFACE)) {
+			 reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD;
+		}
+	}
+
 	/*
 	 * For the non-arp interface, we don't write L2 HDR.
 	 */

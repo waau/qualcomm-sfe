@@ -748,7 +748,9 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb)
 	}
 
 	/*
-	 * Validate ip csum
+	 * Validate ip csum if necessary. If ip_summed is set to CHECKSUM_UNNECESSARY, it is assumed
+	 * that the L3 checksum is validated by the Rx interface or the tunnel interface that has
+	 * generated the packet.
 	 */
 	iph = (struct iphdr *)skb->data;
 	if (unlikely(skb->ip_summed != CHECKSUM_UNNECESSARY) && (ip_fast_csum((u8 *)iph, iph->ihl))) {
@@ -1080,6 +1082,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 		original_cm->dscp = msg->dscp_rule.flow_dscp << SFE_IPV4_DSCP_SHIFT;
 		original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 	}
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	original_cm->flow_cookie = 0;
 #endif
@@ -1089,8 +1092,19 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	} else {
 		original_cm->flow_accel = 1;
 	}
-
 #endif
+	/*
+	 * If l2_features are disabled and flow uses l2 features such as macvlan/bridge/pppoe/vlan,
+	 * bottom interfaces are expected to be disabled in the flow rule and always top interfaces
+	 * are used. In such cases, do not use HW csum offload. csum offload is used only when we
+	 * are sending directly to the destination interface that supports it.
+	 */
+	if (likely(dest_dev->features & NETIF_F_HW_CSUM)) {
+		if ((msg->conn_rule.return_top_interface_num == msg->conn_rule.return_interface_num) ||
+			(msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_RETURN_BOTTOM_INTERFACE)) {
+			 original_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD;
+		}
+	}
 
 	/*
 	 * For the non-arp interface, we don't write L2 HDR.
@@ -1168,6 +1182,18 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	}
 
 #endif
+	/*
+	 * If l2_features are disabled and flow uses l2 features such as macvlan/bridge/pppoe/vlan,
+	 * bottom interfaces are expected to be disabled in the flow rule and always top interfaces
+	 * are used. In such cases, do not use HW csum offload. csum offload is used only when we
+	 * are sending directly to the destination interface that supports it.
+	 */
+	if (likely(src_dev->features & NETIF_F_HW_CSUM)) {
+		if ((msg->conn_rule.flow_top_interface_num == msg->conn_rule.flow_interface_num) ||
+			(msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_FLOW_BOTTOM_INTERFACE)) {
+			 reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD;
+		}
+	}
 
 	/*
 	 * For the non-arp interface, we don't write L2 HDR.

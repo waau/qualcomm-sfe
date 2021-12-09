@@ -66,6 +66,8 @@ struct sfe_ipv6_tcp_connection_match {
 					/* remark priority of SKB */
 #define SFE_IPV6_CONNECTION_MATCH_FLAG_DSCP_REMARK (1<<6)
 					/* remark DSCP of packet */
+#define SFE_IPV6_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD (1<<7)
+					/* checksum offload.*/
 
 /*
  * IPv6 connection matching structure.

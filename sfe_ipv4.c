@@ -688,6 +688,39 @@ static void sfe_ipv4_free_connection_rcu(struct rcu_head *head)
 }
 
 /*
+ * sfe_ipv4_sync_status()
+ *	update a connection status to its connection manager.
+ *
+ * si: the ipv4 context
+ * c: which connection to be notified
+ * reason: what kind of notification: flush, stats  or destroy
+ */
+void sfe_ipv4_sync_status(struct sfe_ipv4 *si,
+					       struct sfe_ipv4_connection *c,
+					       sfe_sync_reason_t reason)
+{
+	struct sfe_connection_sync sis;
+	u64 now_jiffies;
+	sfe_sync_rule_callback_t sync_rule_callback;
+
+	rcu_read_lock();
+	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+	if (!sync_rule_callback) {
+		rcu_read_unlock();
+		return;
+	}
+
+	/*
+	 * Generate a sync message and then sync.
+	 */
+	now_jiffies = get_jiffies_64();
+	sfe_ipv4_gen_sync_connection(si, c, &sis, reason, now_jiffies);
+	sync_rule_callback(&sis);
+
+	rcu_read_unlock();
+}
+
+/*
  * sfe_ipv4_flush_connection()
  *	Flush a connection and free all associated resources.
  *
@@ -700,27 +733,10 @@ void sfe_ipv4_flush_connection(struct sfe_ipv4 *si,
 					       struct sfe_ipv4_connection *c,
 					       sfe_sync_reason_t reason)
 {
-	u64 now_jiffies;
-	sfe_sync_rule_callback_t sync_rule_callback;
-
 	BUG_ON(!c->removed);
 
 	this_cpu_inc(si->stats_pcpu->connection_flushes64);
-
-	rcu_read_lock();
-	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
-
-	/*
-	 * Generate a sync message and then sync.
-	 */
-	if (sync_rule_callback) {
-		struct sfe_connection_sync sis;
-		now_jiffies = get_jiffies_64();
-		sfe_ipv4_gen_sync_connection(si, c, &sis, reason, now_jiffies);
-		sync_rule_callback(&sis);
-	}
-
-	rcu_read_unlock();
+	sfe_ipv4_sync_status(si, c, reason);
 
 	/*
 	 * Release our hold of the source and dest devices and free the memory
@@ -753,7 +769,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 	unsigned int tot_len;
 	unsigned int frag_off;
 	unsigned int ihl;
-	bool flush_on_find;
+	bool sync_on_find;
 	bool ip_options;
 	struct iphdr *iph;
 	u32 protocol;
@@ -823,7 +839,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 	/*
 	 * If we have a (first) fragment then mark it to cause any connection to flush.
 	 */
-	flush_on_find = unlikely(frag_off & IP_MF) ? true : false;
+	sync_on_find = unlikely(frag_off & IP_MF) ? true : false;
 
 	/*
 	 * Do we have any IP options?  That's definite a slow path!  If we do have IP
@@ -839,16 +855,16 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 			return 0;
 		}
 
-		flush_on_find = true;
+		sync_on_find = true;
 	}
 
 	protocol = iph->protocol;
 	if (IPPROTO_UDP == protocol) {
-		return sfe_ipv4_recv_udp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info, tun_outer);
+		return sfe_ipv4_recv_udp(si, skb, dev, len, iph, ihl, sync_on_find, l2_info, tun_outer);
 	}
 
 	if (IPPROTO_TCP == protocol) {
-		return sfe_ipv4_recv_tcp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info);
+		return sfe_ipv4_recv_tcp(si, skb, dev, len, iph, ihl, sync_on_find, l2_info);
 	}
 
 	if (IPPROTO_ICMP == protocol) {

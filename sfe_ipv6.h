@@ -389,5 +389,9 @@ void sfe_ipv6_flush_connection(struct sfe_ipv6 *si,
 				      struct sfe_ipv6_connection *c,
 				      sfe_sync_reason_t reason);
 
+void sfe_ipv6_sync_status(struct sfe_ipv6 *si,
+				      struct sfe_ipv6_connection *c,
+				      sfe_sync_reason_t reason);
+
 void sfe_ipv6_exit(void);
 int sfe_ipv6_init(void);

@@ -689,6 +689,40 @@ static void sfe_ipv6_free_sfe_ipv6_connection_rcu(struct rcu_head *head)
 }
 
 /*
+ * sfe_ipv6_sync_status()
+ *	update a connection status to its connection manager.
+ *
+ * si: the ipv6 context
+ * c: which connection to be notified
+ * reason: what kind of reason: flush, or destroy
+ */
+void sfe_ipv6_sync_status(struct sfe_ipv6 *si,
+				      struct sfe_ipv6_connection *c,
+				      sfe_sync_reason_t reason)
+{
+	struct sfe_connection_sync sis;
+	u64 now_jiffies;
+	sfe_sync_rule_callback_t sync_rule_callback;
+
+	rcu_read_lock();
+	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+
+	if (unlikely(!sync_rule_callback)) {
+		rcu_read_unlock();
+		return;
+	}
+
+	/*
+	 * Generate a sync message and then sync.
+	 */
+	now_jiffies = get_jiffies_64();
+	sfe_ipv6_gen_sync_connection(si, c, &sis, reason, now_jiffies);
+	sync_rule_callback(&sis);
+
+	rcu_read_unlock();
+}
+
+/*
  * sfe_ipv6_flush_connection()
  *	Flush a connection and free all associated resources.
  *
@@ -701,30 +735,15 @@ void sfe_ipv6_flush_connection(struct sfe_ipv6 *si,
 				      struct sfe_ipv6_connection *c,
 				      sfe_sync_reason_t reason)
 {
-	u64 now_jiffies;
-	sfe_sync_rule_callback_t sync_rule_callback;
-
 	BUG_ON(!c->removed);
 
 	this_cpu_inc(si->stats_pcpu->connection_flushes64);
-
-	rcu_read_lock();
-
-	sync_rule_callback = rcu_dereference(si->sync_rule_callback);
+	sfe_ipv6_sync_status(si, c, reason);
 
 	/*
-	 * Generate a sync message and then sync.
+	 * Release our hold of the source and dest devices and free the memory
+	 * for our connection objects.
 	 */
-
-	if (sync_rule_callback) {
-		struct sfe_connection_sync sis;
-		now_jiffies = get_jiffies_64();
-		sfe_ipv6_gen_sync_connection(si, c, &sis, reason, now_jiffies);
-		sync_rule_callback(&sis);
-	}
-
-	rcu_read_unlock();
-
 	call_rcu(&c->rcu, sfe_ipv6_free_sfe_ipv6_connection_rcu);
 }
 
@@ -752,7 +771,7 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 	unsigned int len;
 	unsigned int payload_len;
 	unsigned int ihl = sizeof(struct ipv6hdr);
-	bool flush_on_find = false;
+	bool sync_on_find = false;
 	struct ipv6hdr *iph;
 	u8 next_hdr;
 
@@ -795,17 +814,6 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 		unsigned int ext_hdr_len;
 
 		ext_hdr = (struct sfe_ipv6_ext_hdr *)(skb->data + ihl);
-		if (next_hdr == NEXTHDR_FRAGMENT) {
-			struct frag_hdr *frag_hdr = (struct frag_hdr *)ext_hdr;
-			unsigned int frag_off = ntohs(frag_hdr->frag_off);
-
-			if (frag_off & SFE_IPV6_FRAG_OFFSET) {
-
-				sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_NON_INITIAL_FRAGMENT);
-				DEBUG_TRACE("non-initial fragment\n");
-				return 0;
-			}
-		}
 
 		ext_hdr_len = ext_hdr->hdr_len;
 		ext_hdr_len <<= 3;
@@ -817,17 +825,20 @@ int sfe_ipv6_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 			DEBUG_TRACE("extension header %d not completed\n", next_hdr);
 			return 0;
 		}
-
-		flush_on_find = true;
+		/*
+		 * Any packets have extend hdr, won't be handled in the fast
+		 * path,sync its status and exception to the kernel.
+		 */
+		sync_on_find = true;
 		next_hdr = ext_hdr->next_hdr;
 	}
 
 	if (IPPROTO_UDP == next_hdr) {
-		return sfe_ipv6_recv_udp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info, tun_outer);
+		return sfe_ipv6_recv_udp(si, skb, dev, len, iph, ihl, sync_on_find, l2_info, tun_outer);
 	}
 
 	if (IPPROTO_TCP == next_hdr) {
-		return sfe_ipv6_recv_tcp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info);
+		return sfe_ipv6_recv_tcp(si, skb, dev, len, iph, ihl, sync_on_find, l2_info);
 	}
 
 	if (IPPROTO_ICMPV6 == next_hdr) {

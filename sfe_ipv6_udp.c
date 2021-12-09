@@ -124,7 +124,7 @@ static int sfe_ipv6_udp_sk_deliver(struct sk_buff *skb, struct sfe_ipv6_connecti
  *	Handle UDP packet receives and forwarding.
  */
 int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool flush_on_find, struct sfe_l2_info *l2_info, bool tun_outer)
+			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool sync_on_find, struct sfe_l2_info *l2_info, bool tun_outer)
 {
 	struct udphdr *udph;
 	struct sfe_ipv6_addr *src_ip;
@@ -192,21 +192,14 @@ int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	/*
 	 * If our packet has been marked as "flush on find" we can't actually
 	 * forward it in the fast path, but now that we've found an associated
-	 * connection we can flush that out before we process the packet.
+	 * connection we need sync its status before exception it to slow path.
 	 */
-	if (unlikely(flush_on_find)) {
-		struct sfe_ipv6_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv6_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("flush on find\n");
-		if (ret) {
-			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
+	if (unlikely(sync_on_find)) {
+		sfe_ipv6_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 		rcu_read_unlock();
 
 		sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
+		DEBUG_TRACE("Sync on find\n");
 		return 0;
 	}
 
@@ -229,18 +222,11 @@ int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	 */
 	if (likely(!bridge_flow)) {
 		if (unlikely(iph->hop_limit < 2)) {
-			struct sfe_ipv6_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv6_remove_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			DEBUG_TRACE("hop_limit too low\n");
-			if (ret) {
-				sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
+			sfe_ipv6_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 			rcu_read_unlock();
 
 			sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_UDP_SMALL_TTL);
+			DEBUG_TRACE("hop_limit too low\n");
 			return 0;
 		}
 	}
@@ -250,18 +236,11 @@ int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	 * we can't forward it easily.
 	 */
 	if (unlikely(len > cm->xmit_dev_mtu)) {
-		struct sfe_ipv6_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv6_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("larger than mtu\n");
-		if (ret) {
-			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
+		sfe_ipv6_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 		rcu_read_unlock();
 
 		sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_UDP_NEEDS_FRAGMENTATION);
+		DEBUG_TRACE("Larger than MTU\n");
 		return 0;
 	}
 

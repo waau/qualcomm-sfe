@@ -116,8 +116,8 @@ static int sfe_ipv4_udp_sk_deliver(struct sk_buff *skb, struct sfe_ipv4_connecti
  *	Handle UDP packet receives and forwarding.
  */
 int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-		unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find,
-		struct sfe_l2_info *l2_info, bool tun_outer)
+			     unsigned int len, struct iphdr *iph, unsigned int ihl,
+			     bool sync_on_find, struct sfe_l2_info *l2_info, bool tun_outer)
 {
 	struct udphdr *udph;
 	__be32 src_ip;
@@ -128,7 +128,6 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	u8 ttl;
 	struct net_device *xmit_dev;
 	bool hw_csum;
-	bool ret;
 	int err;
 	bool bridge_flow;
 
@@ -184,22 +183,15 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	}
 
 	/*
-	 * If our packet has beern marked as "flush on find" we can't actually
+	 * If our packet has beern marked as "sync on find" we can't actually
 	 * forward it in the fast path, but now that we've found an associated
-	 * connection we can flush that out before we process the packet.
+	 * connection we need sync its status before exception it to slow path.
 	 */
-	if (unlikely(flush_on_find)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
+	if (unlikely(sync_on_find)) {
+		sfe_ipv4_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 		rcu_read_unlock();
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
-		DEBUG_TRACE("%px: sfe: flush on find\n", cm);
+		DEBUG_TRACE("%px: sfe: sync on find\n", cm);
 		return 0;
 	}
 
@@ -223,17 +215,10 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	if (likely(!bridge_flow)) {
 		ttl = iph->ttl;
 		if (unlikely(ttl < 2)) {
-			struct sfe_ipv4_connection *c = cm->connection;
-			spin_lock_bh(&si->lock);
-			ret = sfe_ipv4_remove_connection(si, c);
-			spin_unlock_bh(&si->lock);
-
-			if (ret) {
-				sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-			}
+			sfe_ipv4_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 			rcu_read_unlock();
 
-			DEBUG_TRACE("TTL too low\n");
+			DEBUG_TRACE("%px: sfe: TTL too low\n", skb);
 			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_SMALL_TTL);
 			return 0;
 		}
@@ -244,17 +229,10 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	 * we can't forward it easily.
 	 */
 	if (unlikely(len > cm->xmit_dev_mtu)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("%px: larger than mtu\n", cm);
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
+		sfe_ipv4_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 		rcu_read_unlock();
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_NEEDS_FRAGMENTATION);
+		DEBUG_TRACE("%px: sfe: larger than MTU\n", cm);
 		return 0;
 	}
 

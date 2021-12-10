@@ -33,7 +33,6 @@
 #include "sfe_ipv6.h"
 
 /*
-	spin_unlock_bh(&sfe_ctx->lock);
  * sfe_ipv6_recv_icmp()
  *	Handle ICMP packet receives.
  *

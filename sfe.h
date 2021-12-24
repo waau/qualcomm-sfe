@@ -135,7 +135,7 @@ typedef void (*sfe_sync_rule_callback_t)(struct sfe_connection_sync *);
 /*
  * IPv4 APIs used by connection manager
  */
-int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_info *l2_info);
+int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_info *l2_info, bool tun_outer);
 int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg);
 void sfe_ipv4_destroy_rule(struct sfe_ipv4_rule_destroy_msg *msg);
 void sfe_ipv4_destroy_all_rules_for_dev(struct net_device *dev);

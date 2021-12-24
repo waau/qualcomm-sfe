@@ -1110,7 +1110,7 @@ int sfe_recv(struct sk_buff *skb)
 	switch (htons(skb->protocol)) {
 	case ETH_P_IP:
 		if (sfe_dev_is_layer_3_interface(dev, true) || (dev->priv_flags & IFF_MACVLAN_PORT)) {
-			return sfe_ipv4_recv(dev, skb, NULL);
+			return sfe_ipv4_recv(dev, skb, NULL, false);
 		}
 
 		DEBUG_TRACE("no IPv4 address for device: %s\n", dev->name);
@@ -1141,7 +1141,7 @@ int sfe_recv(struct sk_buff *skb)
 	 * PPPoE is doing it in the sfe_pppoe_validate_hdr()
 	 */
 	if (likely(l2_info.protocol == ETH_P_IP)) {
-		ret = sfe_ipv4_recv(dev, skb, &l2_info);
+		ret = sfe_ipv4_recv(dev, skb, &l2_info, false);
 		if (unlikely(!ret)) {
 			goto send_to_linux;
 		}

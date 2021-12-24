@@ -22,6 +22,7 @@
 #include <net/udp.h>
 #include <linux/etherdevice.h>
 #include <linux/lockdep.h>
+#include <linux/version.h>
 
 #include "sfe_debug.h"
 #include "sfe_api.h"
@@ -31,11 +32,92 @@
 #include "sfe_pppoe.h"
 
 /*
+ * sfe_ipv4_udp_sk_deliver()
+ *	Deliver the packet to the protocol handler registered with Linux.
+ *	To be called under rcu_read_lock()
+ *	Returns:
+ *	1 if the packet needs to be passed to Linux.
+ *	0 if the packet is processed successfully.
+ *	-1 if the packet is dropped in SFE.
+ */
+static int sfe_ipv4_udp_sk_deliver(struct sk_buff *skb, struct sfe_ipv4_connection_match *cm, unsigned int ihl)
+{
+	struct udp_sock *up;
+	struct sock *sk;
+	int ret;
+	int (*encap_rcv)(struct sock *sk, struct sk_buff *skb);
+
+	/*
+	 * Call the decap handler for valid encap_rcv handler.
+	 */
+	up = rcu_dereference(cm->up);
+	encap_rcv = READ_ONCE(up->encap_rcv);
+	if (!encap_rcv) {
+		DEBUG_ERROR("%px: sfe: Error: up->encap_rcv is NULL\n", skb);
+		return 1;
+	}
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+	nf_reset(skb);
+#else
+	nf_reset_ct(skb);
+#endif
+
+	skb_pull(skb, ihl);
+	skb_reset_transport_header(skb);
+
+	/*
+	 * Verify checksum before giving to encap_rcv handler function.
+	 * TODO: The following approach is ignorant for UDPLITE for now.
+	 * Instead, consider calling Linux API to do checksum validation.
+	 */
+	if (unlikely(skb->ip_summed != CHECKSUM_UNNECESSARY) && unlikely(skb->ip_summed != CHECKSUM_COMPLETE)) {
+		skb->csum = inet_compute_pseudo(skb, IPPROTO_UDP);
+		if (unlikely(__skb_checksum_complete(skb))) {
+			DEBUG_ERROR("%px: sfe: Invalid udp checksum\n", skb);
+			kfree_skb(skb);
+			return -1;
+		}
+		DEBUG_TRACE("%px: sfe: udp checksum verified in s/w correctly.\n", skb);
+	}
+
+	sk = (struct sock *)up;
+
+	/*
+	 * At this point, L4 checksum has already been verified and pkt is going
+	 * to Linux's tunnel decap-handler. Setting ip_summed field to CHECKSUM_NONE,
+	 * to ensure that later packet's inner header checksum is validated correctly.
+	 * TODO: Find the fix to set skb->ip_summed = CHECKSUM_NONE;
+	 */
+
+	/*
+	 * encap_rcv() returns the following value:
+	 * =0 if skb was successfully passed to the encap
+	 *    handler or was discarded by it.
+	 * >0 if skb should be passed on to UDP.
+	 * <0 if skb should be resubmitted as proto -N
+	 */
+	ret = encap_rcv(sk, skb);
+	if (unlikely(ret)) {
+		/*
+		 * If encap_rcv fails, vxlan driver drops the packet.
+		 * No need to free the skb here.
+		 */
+
+		DEBUG_ERROR("%px: sfe: udp-decap API return error: %d\n", skb, ret);
+		return -1;
+	}
+
+	return 0;
+}
+
+/*
  * sfe_ipv4_recv_udp()
  *	Handle UDP packet receives and forwarding.
  */
 int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find, struct sfe_l2_info *l2_info)
+		unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find,
+		struct sfe_l2_info *l2_info, bool tun_outer)
 {
 	struct udphdr *udph;
 	__be32 src_ip;
@@ -45,15 +127,16 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	struct sfe_ipv4_connection_match *cm;
 	u8 ttl;
 	struct net_device *xmit_dev;
-	bool ret;
 	bool hw_csum;
+	bool ret;
+	int err;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
 	 */
 	if (unlikely(!pskb_may_pull(skb, (sizeof(struct udphdr) + ihl)))) {
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_HEADER_INCOMPLETE);
-		DEBUG_TRACE("packet too short for UDP header\n");
+		DEBUG_TRACE("%px: packet too short for UDP header\n", skb);
 		return 0;
 	}
 
@@ -80,14 +163,23 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		cm = sfe_ipv4_find_connection_match_rcu(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
 	}
 #else
+	/*
+	 * 5-tuple lookup for UDP flow.
+	 */
 	cm = sfe_ipv4_find_connection_match_rcu(si, dev, IPPROTO_UDP, src_ip, src_port, dest_ip, dest_port);
 #endif
 	if (unlikely(!cm)) {
 
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_NO_CONNECTION);
-		DEBUG_TRACE("no connection found\n");
-		return 0;
+		/*
+		 * try a 4-tuple lookup; required for tunnels like vxlan.
+		 */
+		cm = sfe_ipv4_find_connection_match_rcu(si, dev, IPPROTO_UDP, src_ip, 0, dest_ip, dest_port);
+		if (unlikely(!cm)) {
+			rcu_read_unlock();
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_NO_CONNECTION);
+			DEBUG_TRACE("%px: sfe: no connection found in 4-tuple lookup.\n", skb);
+			return 0;
+		}
 	}
 
 	/*
@@ -106,7 +198,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		}
 		rcu_read_unlock();
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
-		DEBUG_TRACE("flush on find\n");
+		DEBUG_TRACE("%px: sfe: flush on find\n", cm);
 		return 0;
 	}
 
@@ -137,7 +229,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		}
 		rcu_read_unlock();
 
-		DEBUG_TRACE("ttl too low\n");
+		DEBUG_TRACE("%px: sfe : ttl too low\n", skb);
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_SMALL_TTL);
 		return 0;
 	}
@@ -152,7 +244,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		ret = sfe_ipv4_remove_connection(si, c);
 		spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("larger than mtu\n");
+		DEBUG_TRACE("%px: larger than mtu\n", cm);
 		if (ret) {
 			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
 		}
@@ -209,7 +301,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		DEBUG_TRACE("%px: skb is a cloned skb\n", skb);
 		skb = skb_unshare(skb, GFP_ATOMIC);
 		if (!skb) {
-			DEBUG_WARN("Failed to unshare the cloned skb\n");
+			DEBUG_WARN("%px: Failed to unshare the cloned skb\n", skb);
 			rcu_read_unlock();
 			return 0;
 		}
@@ -220,18 +312,6 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		iph = (struct iphdr *)skb->data;
 		udph = (struct udphdr *)(skb->data + ihl);
 	}
-
-	/*
-	 * Update DSCP
-	 */
-	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
-		iph->tos = (iph->tos & SFE_IPV4_DSCP_MASK) | cm->dscp;
-	}
-
-	/*
-	 * Decrement our TTL.
-	 */
-	iph->ttl = ttl - 1;
 
 	/*
 	 * For PPPoE flows, add PPPoE header before L2 header is added.
@@ -322,6 +402,51 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	}
 
 	/*
+	 * UDP sock will be valid only in decap-path.
+	 * Call encap_rcv function associated with udp_sock in cm.
+	 */
+	if (unlikely(cm->up)) {
+		/*
+		 * Call decap handler associated with sock.
+		 * Also validates UDP checksum before calling decap handler.
+		 */
+		err = sfe_ipv4_udp_sk_deliver(skb, cm, ihl);
+		if (unlikely(err == -1)) {
+			rcu_read_unlock();
+			this_cpu_inc(si->stats_pcpu->packets_dropped64);
+			return 1;
+		} else if (unlikely(err == 1)) {
+			rcu_read_unlock();
+			this_cpu_inc(si->stats_pcpu->packets_not_forwarded64);
+			return 0;
+		}
+
+		/*
+		 * Update traffic stats.
+		 */
+		atomic_inc(&cm->rx_packet_count);
+		atomic_add(len, &cm->rx_byte_count);
+
+		rcu_read_unlock();
+		this_cpu_inc(si->stats_pcpu->packets_forwarded64);
+		DEBUG_TRACE("%px: sfe: sfe_ipv4_recv_udp -> encap_rcv done.\n", skb);
+		return 1;
+	}
+
+	/*
+	 * Decrement our TTL
+	 * Except when called from hook function in post-decap.
+	 */
+	iph->ttl -= (u8)(!tun_outer);
+
+	/*
+	 * Update DSCP
+	 */
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
+		iph->tos = (iph->tos & SFE_IPV4_DSCP_MASK) | cm->dscp;
+	}
+
+	/*
 	 * If HW checksum offload is not possible, full L3 checksum and incremental L4 checksum
 	 * are used to update the packet. Setting ip_summed to CHECKSUM_UNNECESSARY ensures checksum is
 	 * not recalculated further in packet path.
@@ -372,7 +497,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	 */
 	skb->mark = cm->connection->mark;
 	if (skb->mark) {
-		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
+		DEBUG_TRACE("%px: sfe: SKB MARK is NON ZERO %x\n", skb, skb->mark);
 	}
 
 	rcu_read_unlock();

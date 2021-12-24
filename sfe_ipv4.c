@@ -23,9 +23,15 @@
 #include <linux/skbuff.h>
 #include <linux/icmp.h>
 #include <net/tcp.h>
+#include <net/udp.h>
+#include <net/vxlan.h>
 #include <linux/etherdevice.h>
 #include <linux/version.h>
 #include <linux/lockdep.h>
+#include <linux/refcount.h>
+#include <linux/netfilter.h>
+#include <linux/inetdevice.h>
+#include <linux/netfilter_ipv4.h>
 
 #include "sfe_debug.h"
 #include "sfe_api.h"
@@ -292,6 +298,7 @@ static void sfe_ipv4_update_summary_stats(struct sfe_ipv4 *si,  struct sfe_ipv4_
 		stats->connection_match_hash_hits64 += s->connection_match_hash_hits64;
 		stats->connection_match_hash_reorders64 += s->connection_match_hash_reorders64;
 		stats->connection_flushes64 += s->connection_flushes64;
+		stats->packets_dropped64 += s->packets_dropped64;
 		stats->packets_forwarded64 += s->packets_forwarded64;
 		stats->packets_not_forwarded64 += s->packets_not_forwarded64;
 		stats->pppoe_encap_packets_forwarded64 += s->pppoe_encap_packets_forwarded64;
@@ -647,6 +654,8 @@ static void sfe_ipv4_gen_sync_connection(struct sfe_ipv4 *si, struct sfe_ipv4_co
 static void sfe_ipv4_free_connection_rcu(struct rcu_head *head)
 {
 	struct sfe_ipv4_connection *c;
+	struct udp_sock *up;
+	struct sock *sk;
 
 	/*
 	 * We dont need spin lock as the connection is already removed from link list
@@ -656,6 +665,16 @@ static void sfe_ipv4_free_connection_rcu(struct rcu_head *head)
 	BUG_ON(!c->removed);
 
 	DEBUG_TRACE("%px: connecton has been deleted\n", c);
+
+	/*
+	 * Decrease the refcount taken in function sfe_ipv4_create_rule(),
+	 * during call of __udp4_lib_lookup()
+	 */
+	up = c->reply_match->up;
+	if (up) {
+		sk = (struct sock *)up;
+		sock_put(sk);
+	}
 
 	/*
 	 * Release our hold of the source and dest devices and free the memory
@@ -727,7 +746,7 @@ void sfe_ipv4_exception_stats_inc(struct sfe_ipv4 *si, enum sfe_ipv4_exception_e
  *
  * Returns 1 if the packet is forwarded or 0 if it isn't.
  */
-int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_info *l2_info)
+int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_info *l2_info, bool tun_outer)
 {
 	struct sfe_ipv4 *si = &__si;
 	unsigned int len;
@@ -786,7 +805,6 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 	 * Does our datagram fit inside the skb?
 	 */
 	if (unlikely(tot_len > len)) {
-
 		DEBUG_TRACE("tot_len: %u, exceeds len: %u\n", tot_len, len);
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_DATAGRAM_INCOMPLETE);
 		return 0;
@@ -826,7 +844,7 @@ int sfe_ipv4_recv(struct net_device *dev, struct sk_buff *skb, struct sfe_l2_inf
 
 	protocol = iph->protocol;
 	if (IPPROTO_UDP == protocol) {
-		return sfe_ipv4_recv_udp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info);
+		return sfe_ipv4_recv_udp(si, skb, dev, len, iph, ihl, flush_on_find, l2_info, tun_outer);
 	}
 
 	if (IPPROTO_TCP == protocol) {
@@ -955,6 +973,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	struct sfe_ipv4_5tuple *tuple = &msg->tuple;
 	s32 flow_interface_num = msg->conn_rule.flow_top_interface_num;
 	s32 return_interface_num = msg->conn_rule.return_top_interface_num;
+	struct net *net;
+	struct sock *sk;
+	unsigned int src_if_idx;
 
 	if (msg->rule_flags & SFE_RULE_CREATE_FLAG_USE_FLOW_BOTTOM_INTERFACE) {
 		flow_interface_num = msg->conn_rule.flow_interface_num;
@@ -1057,9 +1078,9 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 		dev_put(src_dev);
 		dev_put(dest_dev);
 
-		DEBUG_TRACE("connection already exists -  p:%d\n"
+		DEBUG_TRACE("%px: connection already exists -  p:%d\n"
 			    "  s: %s:%pM:%pI4:%u, d: %s:%pM:%pI4:%u\n",
-			    tuple->protocol,
+			    msg, tuple->protocol,
 			    src_dev->name, msg->conn_rule.flow_mac, &tuple->flow_ip, ntohs(tuple->flow_ident),
 			    dest_dev->name, msg->conn_rule.return_mac, &tuple->return_ip, ntohs(tuple->return_ident));
 
@@ -1094,6 +1115,11 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	original_cm->connection = c;
 	original_cm->counter_match = reply_cm;
 	original_cm->flags = 0;
+
+	/*
+	 * UDP Socket is valid only in decap direction.
+	 */
+	RCU_INIT_POINTER(original_cm->up, NULL);
 
 	if (msg->valid_flags & SFE_RULE_CREATE_QOS_VALID) {
 		original_cm->priority =  msg->qos_rule.flow_qos_tag;
@@ -1199,7 +1225,16 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	reply_cm->match_dev = dest_dev;
 	reply_cm->match_protocol = tuple->protocol;
 	reply_cm->match_src_ip = msg->conn_rule.return_ip_xlate;
-	reply_cm->match_src_port = msg->conn_rule.return_ident_xlate;
+
+	/*
+	 * Keep source port as 0 for VxLAN tunnels.
+	 */
+	if (netif_is_vxlan(src_dev) || netif_is_vxlan(dest_dev)) {
+		reply_cm->match_src_port = 0;
+	} else {
+		reply_cm->match_src_port = msg->conn_rule.return_ident_xlate;
+	}
+
 	reply_cm->match_dest_ip = msg->conn_rule.flow_ip_xlate;
 	reply_cm->match_dest_port = msg->conn_rule.flow_ident_xlate;
 
@@ -1226,6 +1261,68 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 		reply_cm->dscp = msg->dscp_rule.return_dscp << SFE_IPV4_DSCP_SHIFT;
 		reply_cm->flags |= SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 	}
+
+	/*
+	 * Setup UDP Socket if found to be valid for decap.
+	 */
+	RCU_INIT_POINTER(reply_cm->up, NULL);
+	net = dev_net(reply_cm->match_dev);
+	src_if_idx = src_dev->ifindex;
+
+	rcu_read_lock();
+
+	/*
+	 * Look for the associated sock object.
+	 * __udp4_lib_lookup() holds a reference for this sock object,
+	 * which will be released in sfe_ipv4_free_connection_rcu()
+	 */
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+	sk = __udp4_lib_lookup(net, reply_cm->match_dest_ip, reply_cm->match_dest_port,
+			reply_cm->xlate_src_ip, reply_cm->xlate_src_port, src_if_idx, &udp_table);
+#else
+	sk = __udp4_lib_lookup(net, reply_cm->match_dest_ip, reply_cm->match_dest_port,
+			reply_cm->xlate_src_ip, reply_cm->xlate_src_port, src_if_idx, 0, &udp_table, NULL);
+#endif
+
+	rcu_read_unlock();
+
+	/*
+	 * We set the UDP sock pointer as valid only for decap direction.
+	 */
+	if (sk && udp_sk(sk)->encap_type) {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+		if (!atomic_add_unless(&sk->sk_refcnt, 1, 0)) {
+#else
+		if (!refcount_inc_not_zero(&sk->sk_refcnt)) {
+#endif
+			kfree(reply_cm);
+			kfree(original_cm);
+			kfree(c);
+
+			DEBUG_TRACE("%px: sfe: unable to take reference for socket(%px)  p:%d\n"
+				    "  s: %s:%pM:%pI4:%u, d: %s:%pM:%pI4:%u\n",
+				    msg, sk, tuple->protocol,
+				    src_dev->name, msg->conn_rule.flow_mac, &tuple->flow_ip, ntohs(tuple->flow_ident),
+				    dest_dev->name, msg->conn_rule.return_mac, &tuple->return_ip, ntohs(tuple->return_ident));
+
+			dev_put(src_dev);
+			dev_put(dest_dev);
+
+			return -ESHUTDOWN;
+		}
+
+		rcu_assign_pointer(reply_cm->up, udp_sk(sk));
+
+		DEBUG_INFO("%px: Sock(%px) lookup success with reply_cm direction\n", msg, sk);
+		DEBUG_INFO("%px: SFE connection -\n"
+			   "  s: %s:%pI4(%pI4):%u(%u)\n"
+			   "  d: %s:%pI4(%pI4):%u(%u)\n",
+			msg, reply_cm->match_dev->name, &reply_cm->match_src_ip, &reply_cm->xlate_src_ip,
+			ntohs(reply_cm->match_src_port), ntohs(reply_cm->xlate_src_port),
+			reply_cm->xmit_dev->name, &reply_cm->match_dest_ip, &reply_cm->xlate_dest_ip,
+			ntohs(reply_cm->match_dest_port), ntohs(reply_cm->xlate_dest_port));
+	}
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	reply_cm->flow_cookie = 0;
 #endif
@@ -1873,6 +1970,7 @@ static bool sfe_ipv4_debug_dev_read_stats(struct sfe_ipv4 *si, char *buffer, cha
 
 	bytes_read = snprintf(msg, CHAR_DEV_MSG_SIZE, "\t<stats "
 			      "num_connections=\"%u\" "
+			      "pkts_dropped=\"%llu\" "
 			      "pkts_forwarded=\"%llu\" pkts_not_forwarded=\"%llu\" "
 			      "create_requests=\"%llu\" create_collisions=\"%llu\" "
 			      "create_failures=\"%llu\" "
@@ -1882,6 +1980,7 @@ static bool sfe_ipv4_debug_dev_read_stats(struct sfe_ipv4 *si, char *buffer, cha
 			      "pppoe_encap_pkts_fwded=\"%llu\" "
 			      "pppoe_decap_pkts_fwded=\"%llu\" />\n",
 				num_conn,
+				stats.packets_dropped64,
 				stats.packets_forwarded64,
 				stats.packets_not_forwarded64,
 				stats.connection_create_requests64,
@@ -2128,6 +2227,40 @@ static void sfe_ipv4_conn_match_hash_init(struct sfe_ipv4 *si, int len)
 	}
 }
 
+#ifdef SFE_PROCESS_LOCAL_OUT
+/*
+ * sfe_ipv4_local_out()
+ *	Called for packets from ip_local_out() - post encapsulation & other packets
+ */
+static unsigned int sfe_ipv4_local_out(void *priv, struct sk_buff *skb, const struct nf_hook_state *nhs)
+{
+	DEBUG_TRACE("%px: sfe: sfe_ipv4_local_out hook called.\n", skb);
+
+	if (likely(skb->skb_iif)) {
+		return sfe_ipv4_recv(skb->dev, skb, NULL, true) ? NF_STOLEN : NF_ACCEPT;
+	}
+
+	return NF_ACCEPT;
+}
+
+/*
+ * struct nf_hook_ops sfe_ipv4_ops_local_out[]
+ *	Hooks into netfilter local out packet monitoring points.
+ */
+static struct nf_hook_ops sfe_ipv4_ops_local_out[] __read_mostly = {
+
+	/*
+	 * Local out routing hook is used to monitor packets.
+	 */
+	{
+		.hook           = sfe_ipv4_local_out,
+		.pf             = PF_INET,
+		.hooknum        = NF_INET_LOCAL_OUT,
+		.priority       = NF_IP_PRI_FIRST,
+	},
+};
+#endif
+
 /*
  * sfe_ipv4_init()
  */
@@ -2178,13 +2311,25 @@ int sfe_ipv4_init(void)
 	}
 #endif /* CONFIG_NF_FLOW_COOKIE */
 
+#ifdef SFE_PROCESS_LOCAL_OUT
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+	result = nf_register_hooks(sfe_ipv4_ops_local_out, ARRAY_SIZE(sfe_ipv4_ops_local_out));
+#else
+	result = nf_register_net_hooks(&init_net, sfe_ipv4_ops_local_out, ARRAY_SIZE(sfe_ipv4_ops_local_out));
+#endif
+	if (result < 0) {
+		DEBUG_ERROR("can't register nf local out hook: %d\n", result);
+		goto exit5;
+	}
+	DEBUG_INFO("Register nf local out hook success: %d\n", result);
+#endif
 	/*
 	 * Register our debug char device.
 	 */
 	result = register_chrdev(0, "sfe_ipv4", &sfe_ipv4_debug_dev_fops);
 	if (result < 0) {
 		DEBUG_ERROR("Failed to register chrdev: %d\n", result);
-		goto exit5;
+		goto exit6;
 	}
 
 	si->debug_dev = result;
@@ -2199,7 +2344,16 @@ int sfe_ipv4_init(void)
 	spin_lock_init(&si->lock);
 	return 0;
 
+exit6:
+#ifdef SFE_PROCESS_LOCAL_OUT
+	DEBUG_TRACE("sfe: Unregister local out hook\n");
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+	nf_unregister_hooks(sfe_ipv4_ops_local_out, ARRAY_SIZE(sfe_ipv4_ops_local_out));
+#else
+	nf_unregister_net_hooks(&init_net, sfe_ipv4_ops_local_out, ARRAY_SIZE(sfe_ipv4_ops_local_out));
+#endif
 exit5:
+#endif
 #ifdef CONFIG_NF_FLOW_COOKIE
 	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
 
@@ -2236,6 +2390,15 @@ void sfe_ipv4_exit(void)
 
 	unregister_chrdev(si->debug_dev, "sfe_ipv4");
 
+#ifdef SFE_PROCESS_LOCAL_OUT
+	DEBUG_TRACE("sfe: Unregister local out hook\n");
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 13, 0))
+	nf_unregister_hooks(sfe_ipv4_ops_local_out, ARRAY_SIZE(sfe_ipv4_ops_local_out));
+#else
+	nf_unregister_net_hooks(&init_net, sfe_ipv4_ops_local_out, ARRAY_SIZE(sfe_ipv4_ops_local_out));
+#endif
+#endif
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	sysfs_remove_file(si->sys_ipv4, &sfe_ipv4_flow_cookie_attr.attr);
 #endif /* CONFIG_NF_FLOW_COOKIE */
@@ -2245,7 +2408,6 @@ void sfe_ipv4_exit(void)
 	kobject_put(si->sys_ipv4);
 
 	free_percpu(si->stats_pcpu);
-
 }
 
 #ifdef CONFIG_NF_FLOW_COOKIE

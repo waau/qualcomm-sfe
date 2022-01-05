@@ -72,6 +72,8 @@ struct sfe_ipv6_tcp_connection_match {
 					/* Indicates that PPPoE should be decapsulated */
 #define SFE_IPV6_CONNECTION_MATCH_FLAG_PPPOE_ENCAP (1<<9)
 					/* Indicates that PPPoE should be encapsulated */
+#define SFE_IPV6_CONNECTION_MATCH_FLAG_BRIDGE_FLOW (1<<10)
+					/* Bridge flow */
 
 /*
  * IPv6 connection matching structure.

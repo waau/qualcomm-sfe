@@ -129,6 +129,7 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	struct net_device *xmit_dev;
 	bool ret;
 	bool hw_csum;
+	bool bridge_flow;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
@@ -220,24 +221,29 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		return 0;
 	}
 #endif
+
+	bridge_flow = !!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_BRIDGE_FLOW);
+
 	/*
 	 * Does our TTL allow forwarding?
 	 */
-	ttl = iph->ttl;
-	if (unlikely(ttl < 2)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
+	if (likely(!bridge_flow)) {
+		ttl = iph->ttl;
+		if (unlikely(ttl < 2)) {
+			struct sfe_ipv4_connection *c = cm->connection;
+			spin_lock_bh(&si->lock);
+			ret = sfe_ipv4_remove_connection(si, c);
+			spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("ttl too low\n");
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			DEBUG_TRACE("TTL too low\n");
+			if (ret) {
+				sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			}
+
+			rcu_read_unlock();
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_TTL);
+			return 0;
 		}
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_TTL);
-		return 0;
 	}
 
 	/*
@@ -495,7 +501,6 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		return 0;
 	}
 
-
 	/*
 	 * From this point on we're good to modify the packet.
 	 */
@@ -548,7 +553,9 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	/*
 	 * Decrement our TTL.
 	 */
-	iph->ttl = ttl - 1;
+	if (likely(!bridge_flow)) {
+		iph->ttl = ttl - 1;
+	}
 
 	/*
 	 * Enable HW csum if rx checksum is verified and xmit interface is CSUM offload capable.

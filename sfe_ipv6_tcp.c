@@ -128,6 +128,7 @@ int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	struct net_device *xmit_dev;
 	bool ret;
 	bool hw_csum;
+	bool bridge_flow;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
@@ -221,23 +222,27 @@ int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	}
 #endif
 
+	bridge_flow = !!(cm->flags & SFE_IPV6_CONNECTION_MATCH_FLAG_BRIDGE_FLOW);
+
 	/*
 	 * Does our hop_limit allow forwarding?
 	 */
-	if (unlikely(iph->hop_limit < 2)) {
-		struct sfe_ipv6_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv6_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
+	if (likely(!bridge_flow)) {
+		if (unlikely(iph->hop_limit < 2)) {
+			struct sfe_ipv6_connection *c = cm->connection;
+			spin_lock_bh(&si->lock);
+			ret = sfe_ipv6_remove_connection(si, c);
+			spin_unlock_bh(&si->lock);
 
-		DEBUG_TRACE("hop_limit too low\n");
-		if (ret) {
-			sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			DEBUG_TRACE("hop_limit too low\n");
+			if (ret) {
+				sfe_ipv6_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			}
+			rcu_read_unlock();
+
+			sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_TCP_SMALL_TTL);
+			return 0;
 		}
-		rcu_read_unlock();
-
-		sfe_ipv6_exception_stats_inc(si, SFE_IPV6_EXCEPTION_EVENT_TCP_SMALL_TTL);
-		return 0;
 	}
 
 	/*
@@ -556,7 +561,9 @@ int sfe_ipv6_recv_tcp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	/*
 	 * Decrement our hop_limit.
 	 */
-	iph->hop_limit -= 1;
+	if (likely(!bridge_flow)) {
+		iph->hop_limit -= 1;
+	}
 
 	/*
 	 * Enable HW csum if rx checksum is verified and xmit interface is CSUM offload capable.

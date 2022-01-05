@@ -130,6 +130,7 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	bool hw_csum;
 	bool ret;
 	int err;
+	bool bridge_flow;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
@@ -214,24 +215,28 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	}
 #endif
 
+	bridge_flow = !!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_BRIDGE_FLOW);
+
 	/*
 	 * Does our TTL allow forwarding?
 	 */
-	ttl = iph->ttl;
-	if (unlikely(ttl < 2)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
+	if (likely(!bridge_flow)) {
+		ttl = iph->ttl;
+		if (unlikely(ttl < 2)) {
+			struct sfe_ipv4_connection *c = cm->connection;
+			spin_lock_bh(&si->lock);
+			ret = sfe_ipv4_remove_connection(si, c);
+			spin_unlock_bh(&si->lock);
 
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			if (ret) {
+				sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			}
+			rcu_read_unlock();
+
+			DEBUG_TRACE("TTL too low\n");
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_SMALL_TTL);
+			return 0;
 		}
-		rcu_read_unlock();
-
-		DEBUG_TRACE("%px: sfe : ttl too low\n", skb);
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_SMALL_TTL);
-		return 0;
 	}
 
 	/*
@@ -437,7 +442,9 @@ int sfe_ipv4_recv_udp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	 * Decrement our TTL
 	 * Except when called from hook function in post-decap.
 	 */
-	iph->ttl -= (u8)(!tun_outer);
+	if (likely(!bridge_flow)) {
+		iph->ttl -= (u8)(!tun_outer);
+	}
 
 	/*
 	 * Update DSCP

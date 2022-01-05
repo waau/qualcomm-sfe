@@ -1116,6 +1116,10 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_DSCP_REMARK;
 	}
 
+	if (msg->rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
+		original_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_BRIDGE_FLOW;
+	}
+
 #ifdef CONFIG_NF_FLOW_COOKIE
 	original_cm->flow_cookie = 0;
 #endif
@@ -1183,11 +1187,15 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 		 * Check whether the rule has configured a specific source MAC address to use.
 		 * This is needed when virtual L3 interfaces such as br-lan, macvlan, vlan are used during egress
 		 */
-		if ((msg->valid_flags & SFE_RULE_CREATE_SRC_MAC_VALID) &&
-		    (msg->src_mac_rule.mac_valid_flags & SFE_SRC_MAC_RETURN_VALID)) {
-			ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)msg->src_mac_rule.return_src_mac);
+		if (msg->rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
+			ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)msg->conn_rule.flow_mac);
 		} else {
-			ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)dest_dev->dev_addr);
+			if ((msg->valid_flags & SFE_RULE_CREATE_SRC_MAC_VALID) &&
+			    (msg->src_mac_rule.mac_valid_flags & SFE_SRC_MAC_RETURN_VALID)) {
+				ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)msg->src_mac_rule.return_src_mac);
+			} else {
+				ether_addr_copy((u8 *)original_cm->xmit_src_mac, (u8 *)dest_dev->dev_addr);
+			}
 		}
 		ether_addr_copy((u8 *)original_cm->xmit_dest_mac, (u8 *)msg->conn_rule.return_mac);
 
@@ -1244,6 +1252,10 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 	if (msg->valid_flags & SFE_RULE_CREATE_DSCP_MARKING_VALID) {
 		reply_cm->dscp = msg->dscp_rule.return_dscp << SFE_IPV6_DSCP_SHIFT;
 		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_DSCP_REMARK;
+	}
+
+	if (msg->rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
+		reply_cm->flags |= SFE_IPV6_CONNECTION_MATCH_FLAG_BRIDGE_FLOW;
 	}
 
 	/*
@@ -1343,11 +1355,15 @@ int sfe_ipv6_create_rule(struct sfe_ipv6_rule_create_msg *msg)
 		 * Check whether the rule has configured a specific source MAC address to use.
 		 * This is needed when virtual L3 interfaces such as br-lan, macvlan, vlan are used during egress
 		 */
-		if ((msg->valid_flags & SFE_RULE_CREATE_SRC_MAC_VALID) &&
-		    (msg->src_mac_rule.mac_valid_flags & SFE_SRC_MAC_FLOW_VALID)) {
-			ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)msg->src_mac_rule.flow_src_mac);
+		if (msg->rule_flags & SFE_RULE_CREATE_FLAG_BRIDGE_FLOW) {
+			ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)msg->conn_rule.return_mac);
 		} else {
-			ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)src_dev->dev_addr);
+			if ((msg->valid_flags & SFE_RULE_CREATE_SRC_MAC_VALID) &&
+			    (msg->src_mac_rule.mac_valid_flags & SFE_SRC_MAC_FLOW_VALID)) {
+				ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)msg->src_mac_rule.flow_src_mac);
+			} else {
+				ether_addr_copy((u8 *)reply_cm->xmit_src_mac, (u8 *)src_dev->dev_addr);
+			}
 		}
 
 		ether_addr_copy((u8 *)reply_cm->xmit_dest_mac, (u8 *)msg->conn_rule.flow_mac);

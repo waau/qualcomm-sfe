@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine.
  *
  * Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -230,7 +230,7 @@ static inline int sfe_addr_equal(sfe_ip_addr_t *a,
  * sfe_l2_parse_flag_set()
  *	Set L2 parse flag
  */
-static inline void sfe_l2_parse_flag_set(struct sfe_l2_info *l2_info, u32 flag)
+static inline void sfe_l2_parse_flag_set(struct sfe_l2_info *l2_info, u16 flag)
 {
 	l2_info->parse_flags |= flag;
 }
@@ -239,7 +239,7 @@ static inline void sfe_l2_parse_flag_set(struct sfe_l2_info *l2_info, u32 flag)
  * sfe_l2_parse_flag_get()
  *	Get L2 parse flag
  */
-static inline u32 sfe_l2_parse_flag_get(struct sfe_l2_info *l2_info)
+static inline u16 sfe_l2_parse_flag_get(struct sfe_l2_info *l2_info)
 {
 	return l2_info->parse_flags;
 }
@@ -248,9 +248,9 @@ static inline u32 sfe_l2_parse_flag_get(struct sfe_l2_info *l2_info)
  * sfe_l2_parse_flag_check()
  *	Check L2 parse flag
  */
-static inline bool sfe_l2_parse_flag_check(struct sfe_l2_info *l2_info, u32 flag)
+static inline bool sfe_l2_parse_flag_check(struct sfe_l2_info *l2_info, u16 flag)
 {
-	return l2_info->parse_flags & flag;
+	return !!(l2_info->parse_flags & flag);
 }
 
 /*

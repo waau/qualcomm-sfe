@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine header file for IPv4.
  *
  * Copyright (c) 2013-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -237,7 +237,7 @@ enum sfe_ipv4_exception_events {
 	SFE_IPV4_EXCEPTION_EVENT_DATAGRAM_INCOMPLETE,
 	SFE_IPV4_EXCEPTION_EVENT_IP_OPTIONS_INCOMPLETE,
 	SFE_IPV4_EXCEPTION_EVENT_UNHANDLED_PROTOCOL,
-	SFE_IPV4_EXCEPTION_EVENT_PPPOE_HEADER_ENCAP_FAILED,
+	SFE_IPV4_EXCEPTION_EVENT_NO_HEADROOM,
 	SFE_IPV4_EXCEPTION_EVENT_INVALID_PPPOE_SESSION,
 	SFE_IPV4_EXCEPTION_EVENT_INCORRECT_PPPOE_PARSING,
 	SFE_IPV4_EXCEPTION_EVENT_PPPOE_NOT_SET_IN_CME,

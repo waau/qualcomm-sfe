@@ -3,7 +3,7 @@
  *     API for shortcut forwarding engine.
  *
  * Copyright (c) 2015,2016, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -473,7 +473,7 @@ static bool sfe_recv_parse_l2(struct net_device *dev, struct sk_buff *skb, struc
 	 * Parse only PPPoE session packets
 	 * skb->data is pointing to PPPoE hdr
 	 */
-	if (!sfe_pppoe_validate_hdr(skb, l2_info)) {
+	if (!sfe_pppoe_parse_hdr(skb, l2_info)) {
 
 		/*
 		 * For exception from PPPoE return from here without modifying the skb->data
@@ -481,10 +481,6 @@ static bool sfe_recv_parse_l2(struct net_device *dev, struct sk_buff *skb, struc
 		 */
 		return false;
 	}
-
-	sfe_l2_parse_flag_set(l2_info, SFE_L2_PARSE_FLAGS_PPPOE_INGRESS);
-	sfe_l2_pppoe_hdr_offset_set(l2_info, (skb->data - skb->head));
-	sfe_l2_hdr_size_set(l2_info, SFE_PPPOE_HEADER_SIZE);
 
 	/*
 	 * Pull by L2 header size considering all L2.5 headers
@@ -1143,6 +1139,11 @@ int sfe_recv(struct sk_buff *skb)
 
 	dev = skb->dev;
 
+	/*
+	 * Setting parse flags to 0 since l2_info is passed for non L2.5 header case as well
+	 */
+	l2_info.parse_flags = 0;
+
 #ifdef CONFIG_NET_CLS_ACT
 	/*
 	 * If ingress Qdisc configured, and packet not processed by ingress Qdisc yet
@@ -1166,7 +1167,7 @@ int sfe_recv(struct sk_buff *skb)
 	switch (ntohs(skb->protocol)) {
 	case ETH_P_IP:
 		if (likely(sfe_is_l2_feature_enabled()) || sfe_dev_is_layer_3_interface(dev, true)) {
-			return sfe_ipv4_recv(dev, skb, NULL, false);
+			return sfe_ipv4_recv(dev, skb, &l2_info, false);
 		}
 
 		DEBUG_TRACE("No IPv4 address for device: %s\n", dev->name);
@@ -1174,7 +1175,7 @@ int sfe_recv(struct sk_buff *skb)
 
 	case ETH_P_IPV6:
 		if (likely(sfe_is_l2_feature_enabled()) || sfe_dev_is_layer_3_interface(dev, false)) {
-			return sfe_ipv6_recv(dev, skb, NULL, false);
+			return sfe_ipv6_recv(dev, skb, &l2_info, false);
 		}
 
 		DEBUG_TRACE("No IPv6 address for device: %s\n", dev->name);
@@ -1196,13 +1197,13 @@ int sfe_recv(struct sk_buff *skb)
 	 * Parse the L2 headers to find the L3 protocol and the L2 header offset
 	 */
 	if (unlikely(!sfe_recv_parse_l2(dev, skb, &l2_info))) {
-		DEBUG_TRACE("%px: Invalid L2.5 header format\n", skb);
+		DEBUG_TRACE("%px: Invalid L2.5 header format with protocol : %d\n", skb, ntohs(skb->protocol));
 		return 0;
 	}
 
 	/*
-	 * Protocol in l2_info is expected to be in network byte order.
-	 * PPPoE is doing it in the sfe_pppoe_validate_hdr()
+	 * Protocol in l2_info is expected to be in host byte order.
+	 * PPPoE is doing it in the sfe_pppoe_parse_hdr()
 	 */
 	if (likely(l2_info.protocol == ETH_P_IP)) {
 		ret = sfe_ipv4_recv(dev, skb, &l2_info, false);

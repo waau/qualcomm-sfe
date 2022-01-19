@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine - IPv4 edition.
  *
  * Copyright (c) 2013-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021,2022 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -2253,10 +2253,13 @@ static void sfe_ipv4_conn_match_hash_init(struct sfe_ipv4 *si, int len)
  */
 static unsigned int sfe_ipv4_local_out(void *priv, struct sk_buff *skb, const struct nf_hook_state *nhs)
 {
+	struct sfe_l2_info l2_info;
+	l2_info.parse_flags = 0;
+
 	DEBUG_TRACE("%px: sfe: sfe_ipv4_local_out hook called.\n", skb);
 
 	if (likely(skb->skb_iif)) {
-		return sfe_ipv4_recv(skb->dev, skb, NULL, true) ? NF_STOLEN : NF_ACCEPT;
+		return sfe_ipv4_recv(skb->dev, skb, &l2_info, true) ? NF_STOLEN : NF_ACCEPT;
 	}
 
 	return NF_ACCEPT;

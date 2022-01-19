@@ -1084,7 +1084,7 @@ int sfe_ipv4_create_rule(struct sfe_ipv4_rule_create_msg *msg)
 	original_cm->match_dev = src_dev;
 	original_cm->match_protocol = tuple->protocol;
 	original_cm->match_src_ip = tuple->flow_ip;
-	original_cm->match_src_port = tuple->flow_ident;
+	original_cm->match_src_port = netif_is_vxlan(src_dev) ? 0 : tuple->flow_ident;
 	original_cm->match_dest_ip = tuple->return_ip;
 	original_cm->match_dest_port = tuple->return_ident;
 

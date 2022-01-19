@@ -435,8 +435,6 @@ int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_devic
 	 */
 	if (likely(hw_csum)) {
 		skb->ip_summed = CHECKSUM_PARTIAL;
-	} else {
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
 	}
 
 	/*

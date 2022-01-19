@@ -25,6 +25,7 @@
 #include <net/addrconf.h>
 #include <linux/inetdevice.h>
 #include <net/pkt_sched.h>
+#include <net/vxlan.h>
 
 #include "sfe_debug.h"
 #include "sfe_api.h"
@@ -553,7 +554,7 @@ sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal *sfe_c
 	 * Does our input device support IP processing?
 	 */
 	src_dev = dev_get_by_index(&init_net, msg->msg.rule_create.conn_rule.flow_top_interface_num);
-	if (!src_dev || (is_routed && !sfe_dev_is_layer_3_interface(src_dev, true))) {
+	if (!src_dev || (is_routed && !sfe_dev_is_layer_3_interface(src_dev, true) && !netif_is_vxlan(src_dev))) {
 		ret = SFE_CMN_RESPONSE_EINTERFACE;
 		sfe_incr_exceptions(SFE_EXCEPTION_SRC_DEV_NOT_L3);
 		goto failed_ret;
@@ -573,7 +574,7 @@ sfe_tx_status_t sfe_create_ipv4_rule_msg(struct sfe_ctx_instance_internal *sfe_c
 	 * Does our output device support IP processing?
 	 */
 	dest_dev = dev_get_by_index(&init_net, msg->msg.rule_create.conn_rule.return_top_interface_num);
-	if (!dest_dev || (is_routed && !sfe_dev_is_layer_3_interface(dest_dev, true))) {
+	if (!dest_dev || (is_routed && !sfe_dev_is_layer_3_interface(dest_dev, true) && !netif_is_vxlan(dest_dev))) {
 		ret = SFE_CMN_RESPONSE_EINTERFACE;
 		sfe_incr_exceptions(SFE_EXCEPTION_DEST_DEV_NOT_L3);
 		goto failed_ret;
@@ -902,7 +903,7 @@ sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal *sfe_c
 	 * Does our input device support IP processing?
 	 */
 	src_dev = dev_get_by_index(&init_net, msg->msg.rule_create.conn_rule.flow_top_interface_num);
-	if (!src_dev || (is_routed && !sfe_dev_is_layer_3_interface(src_dev, false))) {
+	if (!src_dev || (is_routed && !sfe_dev_is_layer_3_interface(src_dev, false) && !netif_is_vxlan(src_dev))) {
 		ret = SFE_CMN_RESPONSE_EINTERFACE;
 		sfe_incr_exceptions(SFE_EXCEPTION_SRC_DEV_NOT_L3);
 		goto failed_ret;
@@ -922,7 +923,7 @@ sfe_tx_status_t sfe_create_ipv6_rule_msg(struct sfe_ctx_instance_internal *sfe_c
 	 * Does our output device support IP processing?
 	 */
 	dest_dev = dev_get_by_index(&init_net, msg->msg.rule_create.conn_rule.return_top_interface_num);
-	if (!dest_dev || (is_routed && !sfe_dev_is_layer_3_interface(dest_dev, false))) {
+	if (!dest_dev || (is_routed && !sfe_dev_is_layer_3_interface(dest_dev, false) && !netif_is_vxlan(dest_dev))) {
 		ret = SFE_CMN_RESPONSE_EINTERFACE;
 		sfe_incr_exceptions(SFE_EXCEPTION_DEST_DEV_NOT_L3);
 		goto failed_ret;

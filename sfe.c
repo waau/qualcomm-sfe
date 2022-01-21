@@ -169,14 +169,13 @@ inline bool sfe_dev_is_layer_3_interface(struct net_device *dev, bool check_v4)
 		}
 
 		/*
-		 * Does it have an IPv4 address?  If it doesn't then we can't do anything
-		 * interesting here!
+		 * Does it have an IPv4 address?  If it doesn't then it could be MAP-T interface,
+		 * else we can't do anything interesting here!
 		 */
-		if (unlikely(!in4_dev->ifa_list)) {
-			return false;
+		if (likely(in4_dev->ifa_list || (dev->priv_flags_ext & IFF_EXT_MAPT))) {
+			return true;
 		}
-
-		return true;
+		return false;
 	}
 
 	/*
@@ -188,14 +187,14 @@ inline bool sfe_dev_is_layer_3_interface(struct net_device *dev, bool check_v4)
 	}
 
 	/*
-	 * Does it have an IPv6 address?  If it doesn't then we can't do anything
-	 * interesting here!
+	 * Does it have an IPv6 address?  If it doesn't then it could be MAP-T interface,
+	 * else we can't do anything interesting here!
 	 */
-	if (unlikely(list_empty(&in6_dev->addr_list))) {
-		return false;
+	if (likely(!list_empty(&in6_dev->addr_list) || (dev->priv_flags_ext & IFF_EXT_MAPT))) {
+		return true;
 	}
 
-	return true;
+	return false;
 }
 
 /*

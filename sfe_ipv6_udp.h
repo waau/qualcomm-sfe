@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine header file for IPv6 UDP
  *
  * Copyright (c) 2015-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -19,4 +19,5 @@
  */
 
 int sfe_ipv6_recv_udp(struct sfe_ipv6 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool flush_on_find);
+			     unsigned int len, struct ipv6hdr *iph, unsigned int ihl, bool sync_on_find,
+			     struct sfe_l2_info *l2_info, bool tun_outer);

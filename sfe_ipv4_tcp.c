@@ -3,7 +3,7 @@
  *	Shortcut forwarding engine - IPv4 TCP implementation
  *
  * Copyright (c) 2013-2016, 2019-2020, The Linux Foundation. All rights reserved.
- * Copyright (c) 2021 Qualcomm Innovation Center, Inc. All rights reserved.
+ * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -28,6 +28,7 @@
 #include "sfe.h"
 #include "sfe_flow_cookie.h"
 #include "sfe_ipv4.h"
+#include "sfe_pppoe.h"
 
 /*
  * sfe_ipv4_process_tcp_option_sack()
@@ -114,7 +115,7 @@ static bool sfe_ipv4_process_tcp_option_sack(const struct tcphdr *th, const u32 
  *	Handle TCP packet receives and forwarding.
  */
 int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool flush_on_find)
+			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool sync_on_find, struct sfe_l2_info *l2_info)
 {
 	struct tcphdr *tcph;
 	__be32 src_ip;
@@ -127,6 +128,8 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	u32 flags;
 	struct net_device *xmit_dev;
 	bool ret;
+	bool hw_csum;
+	bool bridge_flow;
 
 	/*
 	 * Is our packet too short to contain a valid UDP header?
@@ -185,25 +188,16 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	}
 
 	/*
-	 * If our packet has beern marked as "flush on find" we can't actually
+	 * If our packet has beern marked as "sync on find" we can't actually
 	 * forward it in the fast path, but now that we've found an associated
-	 * connection we can flush that out before we process the packet.
+	 * connection we need sync its status before throw it slow path.
 	 */
-	if (unlikely(flush_on_find)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("flush on find\n");
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-
+	if (unlikely(sync_on_find)) {
+		sfe_ipv4_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 		rcu_read_unlock();
 
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
+		DEBUG_TRACE("Sync on find\n");
 		return 0;
 	}
 
@@ -218,24 +212,22 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		return 0;
 	}
 #endif
+
+	bridge_flow = !!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_BRIDGE_FLOW);
+
 	/*
 	 * Does our TTL allow forwarding?
 	 */
-	ttl = iph->ttl;
-	if (unlikely(ttl < 2)) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
+	if (likely(!bridge_flow)) {
+		ttl = iph->ttl;
+		if (unlikely(ttl < 2)) {
+			sfe_ipv4_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
+			rcu_read_unlock();
 
-		DEBUG_TRACE("ttl too low\n");
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_TTL);
+			DEBUG_TRACE("TTL too low\n");
+			return 0;
 		}
-
-		rcu_read_unlock();
-		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_TCP_SMALL_TTL);
-		return 0;
 	}
 
 	/*
@@ -243,18 +235,11 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	 * we can't forward it easily.
 	 */
 	if (unlikely((len > cm->xmit_dev_mtu) && !skb_is_gso(skb))) {
-		struct sfe_ipv4_connection *c = cm->connection;
-		spin_lock_bh(&si->lock);
-		ret = sfe_ipv4_remove_connection(si, c);
-		spin_unlock_bh(&si->lock);
-
-		DEBUG_TRACE("larger than mtu\n");
-		if (ret) {
-			sfe_ipv4_flush_connection(si, c, SFE_SYNC_REASON_FLUSH);
-		}
-
+		sfe_ipv4_sync_status(si, cm->connection, SFE_SYNC_REASON_STATS);
 		rcu_read_unlock();
+
 		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_UDP_IP_OPTIONS_OR_INITIAL_FRAGMENT);
+		DEBUG_TRACE("Larger than MTU\n");
 		return 0;
 	}
 
@@ -459,10 +444,6 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	}
 
 	/*
-	 * From this point on we're good to modify the packet.
-	 */
-
-	/*
 	 * Check if skb was cloned. If it was, unshare it. Because
 	 * the data area is going to be written in this path and we don't want to
 	 * change the cloned skb's data section.
@@ -484,6 +465,64 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	}
 
 	/*
+	 * For PPPoE packets, match server MAC and session id
+	 */
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PPPOE_DECAP)) {
+		struct pppoe_hdr *ph;
+		struct ethhdr *eth;
+
+		if (unlikely(!sfe_l2_parse_flag_check(l2_info, SFE_L2_PARSE_FLAGS_PPPOE_INGRESS))) {
+			rcu_read_unlock();
+			DEBUG_TRACE("%px: PPPoE header not present in packet for PPPoE rule\n", skb);
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_INCORRECT_PPPOE_PARSING);
+			return 0;
+		}
+
+		ph = (struct pppoe_hdr *)(skb->head + sfe_l2_pppoe_hdr_offset_get(l2_info));
+		eth = (struct ethhdr *)(skb->head + sfe_l2_hdr_offset_get(l2_info));
+		if (unlikely(cm->pppoe_session_id != ntohs(ph->sid)) || unlikely(!(ether_addr_equal((u8*)cm->pppoe_remote_mac, (u8 *)eth->h_source)))) {
+			DEBUG_TRACE("%px: PPPoE sessions with session IDs %d and %d or server MACs %pM and %pM did not match\n",
+							skb, cm->pppoe_session_id, htons(ph->sid), cm->pppoe_remote_mac, eth->h_source);
+			rcu_read_unlock();
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_INVALID_PPPOE_SESSION);
+			return 0;
+		}
+		skb->protocol = htons(l2_info->protocol);
+		this_cpu_inc(si->stats_pcpu->pppoe_decap_packets_forwarded64);
+
+	} else if (unlikely(sfe_l2_parse_flag_check(l2_info, SFE_L2_PARSE_FLAGS_PPPOE_INGRESS))) {
+
+		/*
+		 * If packet contains PPPOE header but CME doesn't contain PPPoE flag yet we are exceptioning the packet to linux
+		 */
+		rcu_read_unlock();
+		DEBUG_TRACE("%px: CME doesn't contain PPPOE flag but packet has PPPoE header\n", skb);
+		sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_PPPOE_NOT_SET_IN_CME);
+		return 0;
+	}
+
+	/*
+	 * From this point on we're good to modify the packet.
+	 */
+
+	/*
+	 * For PPPoE flows, add PPPoE header before L2 header is added.
+	 */
+	if (cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_PPPOE_ENCAP) {
+		if (unlikely(!sfe_pppoe_add_header(skb, cm->pppoe_session_id, PPP_IP))) {
+			rcu_read_unlock();
+			DEBUG_WARN("%px: PPPoE header addition failed\n", skb);
+			sfe_ipv4_exception_stats_inc(si, SFE_IPV4_EXCEPTION_EVENT_NO_HEADROOM);
+			return 0;
+		}
+		this_cpu_inc(si->stats_pcpu->pppoe_encap_packets_forwarded64);
+	}
+
+	/*
+	 * TODO : VLAN headers if any should be added here when supported.
+	 */
+
+	/*
 	 * Update DSCP
 	 */
 	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_DSCP_REMARK)) {
@@ -493,7 +532,16 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	/*
 	 * Decrement our TTL.
 	 */
-	iph->ttl = ttl - 1;
+	if (likely(!bridge_flow)) {
+		iph->ttl = ttl - 1;
+	}
+
+	/*
+	 * Enable HW csum if rx checksum is verified and xmit interface is CSUM offload capable.
+	 * Note: If L4 csum at Rx was found to be incorrect, we (router) should use incremental L4 checksum here
+	 * so that HW does not re-calculate/replace the L4 csum
+	 */
+	hw_csum = !!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_CSUM_OFFLOAD) && (skb->ip_summed == CHECKSUM_UNNECESSARY);
 
 	/*
 	 * Do we have to perform translations of the source address/port?
@@ -505,19 +553,17 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		iph->saddr = cm->xlate_src_ip;
 		tcph->source = cm->xlate_src_port;
 
-		/*
-		 * Do we have a non-zero UDP checksum?  If we do then we need
-		 * to update it.
-		 */
-		tcp_csum = tcph->check;
-		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-			sum = tcp_csum + cm->xlate_src_partial_csum_adjustment;
-		} else {
-			sum = tcp_csum + cm->xlate_src_csum_adjustment;
-		}
+		if (unlikely(!hw_csum)) {
+			tcp_csum = tcph->check;
+			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+				sum = tcp_csum + cm->xlate_src_partial_csum_adjustment;
+			} else {
+				sum = tcp_csum + cm->xlate_src_csum_adjustment;
+			}
 
-		sum = (sum & 0xffff) + (sum >> 16);
-		tcph->check = (u16)sum;
+			sum = (sum & 0xffff) + (sum >> 16);
+			tcph->check = (u16)sum;
+		}
 	}
 
 	/*
@@ -530,25 +576,30 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 		iph->daddr = cm->xlate_dest_ip;
 		tcph->dest = cm->xlate_dest_port;
 
-		/*
-		 * Do we have a non-zero UDP checksum?  If we do then we need
-		 * to update it.
-		 */
-		tcp_csum = tcph->check;
-		if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
-			sum = tcp_csum + cm->xlate_dest_partial_csum_adjustment;
-		} else {
-			sum = tcp_csum + cm->xlate_dest_csum_adjustment;
-		}
+		if (unlikely(!hw_csum)) {
+			tcp_csum = tcph->check;
+			if (unlikely(skb->ip_summed == CHECKSUM_PARTIAL)) {
+				sum = tcp_csum + cm->xlate_dest_partial_csum_adjustment;
+			} else {
+				sum = tcp_csum + cm->xlate_dest_csum_adjustment;
+			}
 
-		sum = (sum & 0xffff) + (sum >> 16);
-		tcph->check = (u16)sum;
+			sum = (sum & 0xffff) + (sum >> 16);
+			tcph->check = (u16)sum;
+		}
 	}
 
 	/*
-	 * Replace the IP checksum.
+	 * If HW checksum offload is not possible, full L3 checksum and incremental L4 checksum
+	 * are used to update the packet. Setting ip_summed to CHECKSUM_UNNECESSARY ensures checksum is
+	 * not recalculated further in packet path.
 	 */
-	iph->check = sfe_ipv4_gen_ip_csum(iph);
+	if (likely(hw_csum)) {
+		skb->ip_summed = CHECKSUM_PARTIAL;
+	} else {
+		iph->check = sfe_ipv4_gen_ip_csum(iph);
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+	}
 
 	/*
 	 * Update traffic stats.
@@ -564,7 +615,7 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	 */
 	if (likely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_L2_HDR)) {
 		if (unlikely(!(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_WRITE_FAST_ETH_HDR))) {
-			dev_hard_header(skb, xmit_dev, ETH_P_IP,
+			dev_hard_header(skb, xmit_dev, ntohs(skb->protocol),
 					cm->xmit_dest_mac, cm->xmit_src_mac, len);
 		} else {
 			/*
@@ -572,7 +623,7 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 			 */
 			struct ethhdr *eth = (struct ethhdr *)__skb_push(skb, ETH_HLEN);
 
-			eth->h_proto = htons(ETH_P_IP);
+			eth->h_proto = skb->protocol;
 
 			ether_addr_copy((u8 *)eth->h_dest, (u8 *)cm->xmit_dest_mac);
 			ether_addr_copy((u8 *)eth->h_source, (u8 *)cm->xmit_src_mac);
@@ -589,9 +640,8 @@ int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_devic
 	/*
 	 * Mark outgoing packet
 	 */
-	skb->mark = cm->connection->mark;
-	if (skb->mark) {
-		DEBUG_TRACE("SKB MARK is NON ZERO %x\n", skb->mark);
+	if (unlikely(cm->flags & SFE_IPV4_CONNECTION_MATCH_FLAG_MARK)) {
+		skb->mark = cm->connection->mark;
 	}
 
 	rcu_read_unlock();

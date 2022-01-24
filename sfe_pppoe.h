@@ -1,8 +1,7 @@
 /*
- * sfe_ipv4_tcp.h
- *	Shortcut forwarding engine - IPv4 TCP header file
+ * sfe_pppoe.h
+ *	Shortcut flow acceleration for PPPoE flow
  *
- * Copyright (c) 2013-2016, 2019-2020, The Linux Foundation. All rights reserved.
  * Copyright (c) 2021-2022 Qualcomm Innovation Center, Inc. All rights reserved.
  *
  * Permission to use, copy, modify, and/or distribute this software for any
@@ -18,5 +17,12 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-int sfe_ipv4_recv_tcp(struct sfe_ipv4 *si, struct sk_buff *skb, struct net_device *dev,
-			     unsigned int len, struct iphdr *iph, unsigned int ihl, bool sync_on_find, struct sfe_l2_info *l2_info);
+#include <linux/ppp_defs.h>
+#include <linux/if_pppox.h>
+
+struct sfe_ppp_hdr {
+	u16 protocol;
+};
+
+bool sfe_pppoe_add_header(struct sk_buff *skb, u16 pppoe_session_id, u16 ppp_protocol);
+bool sfe_pppoe_parse_hdr(struct sk_buff *skb, struct sfe_l2_info *l2_info);
